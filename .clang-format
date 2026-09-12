@@ -1,0 +1,14 @@
+AlignAfterOpenBracket: BlockIndent
+AlignEscapedNewlines: DontAlign
+AllowAllArgumentsOnNextLine: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Inline
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBraces: Attach
+ColumnLimit: 100
+InsertBraces: true
+PointerAlignment: Left
+SeparateDefinitionBlocks: Always
+
+PenaltyReturnTypeOnItsOwnLine: 10000

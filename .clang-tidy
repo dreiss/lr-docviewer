@@ -1,0 +1,6 @@
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+WarningsAsErrors: 'bugprone-*'
+HeaderFilterRegex: '(^|/)src/'
