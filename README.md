@@ -28,3 +28,12 @@ sudo dnf install poppler-glib-devel cairo-devel libzip-devel \
 git submodule update --init
 just release
 ```
+
+Tests:
+
+```sh
+just venv             # once: create .venv from requirements.txt (Python 3.12+)
+just pytest           # build the debug core and run the tests
+just pytest-sanitize  # the same, against an ASan/UBSan build
+just pytest -k cbz    # pass arguments through to pytest
+```

@@ -73,3 +73,8 @@ target_link_libraries(
     PkgConfig::POPPLER
     m
 )
+
+option(DOCVIEWER_BUILD_TESTS "Build test support libraries" ON)
+if(DOCVIEWER_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

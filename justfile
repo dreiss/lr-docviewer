@@ -29,10 +29,35 @@ debug: (_build "Debug" "debug" "OFF")
 # Build the core with ASan and UBSan.
 sanitize: (_build "Debug" "sanitize" "ON")
 
-# Format the project C sources and headers.
+c_sources := "src/*.c src/*.h tests/integration/*.c"
+
+# Format the project C and Python sources.
 format:
-  clang-format -i src/*.c src/*.h
+  clang-format -i {{c_sources}}
+  .venv/bin/ruff format
 
 # Check formatting without changing files.
 format-check:
-  clang-format --dry-run --Werror src/*.c src/*.h
+  clang-format --dry-run --Werror {{c_sources}}
+  .venv/bin/ruff format --check
+
+# Lint the Python sources.
+lint:
+  .venv/bin/ruff check
+
+# Create .venv with the Python packages that the integration tests need.
+venv:
+  python3 -m venv .venv
+  .venv/bin/pip install -r requirements.txt
+
+[private]
+_pytest directory *args:
+  DOCVIEWER_CORE={{build_root}}/{{directory}}/docviewer_libretro.so \
+  DOCVIEWER_LOG_SHIM={{build_root}}/{{directory}}/tests/liblog_shim.so \
+    .venv/bin/python tests/integration/run.py {{args}}
+
+# Build the debug core and run the tests, passing arguments to pytest.
+pytest *args: debug (_pytest "debug" args)
+
+# Build the sanitizer core and run the tests, passing arguments to pytest.
+pytest-sanitize *args: sanitize (_pytest "sanitize" args)

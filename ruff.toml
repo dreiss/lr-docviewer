@@ -1,0 +1,11 @@
+# Match .clang-format.
+line-length = 100
+target-version = "py312"
+# Treat the integration test modules as first-party imports.
+src = ["tests/integration"]
+# Third-party code and old parked artifacts.
+extend-exclude = ["attic", "vendor"]
+
+[lint]
+# Allow shebang for non-executable files.
+ignore = ["EXE001"]
