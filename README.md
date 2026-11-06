@@ -23,15 +23,19 @@ Build commands:
 ```sh
 sudo apt install build-essential cmake pkg-config \
     libpoppler-glib-dev libcairo2-dev libzip-dev libjpeg-dev libpng-dev
-sudo dnf install poppler-glib-devel cairo-devel libzip-devel \
+sudo dnf install gcc cmake pkgconf poppler-glib-devel cairo-devel libzip-devel \
     libjpeg-turbo-devel libpng-devel
 git submodule update --init
-just release
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
 ```
 
-Tests:
+Development additionally uses `just`, clang-format, and clang-tidy.
+Its builds treat warnings as errors.
 
 ```sh
+just release          # build the optimized core with clang-tidy
+just debug            # the same, with debug information
 just venv             # once: create .venv from requirements.txt (Python 3.12+)
 just pytest           # build the debug core and run the tests
 just pytest-sanitize  # the same, against an ASan/UBSan build

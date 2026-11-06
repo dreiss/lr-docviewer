@@ -18,6 +18,9 @@ if(DOCVIEWER_ENABLE_CLANG_TIDY)
   set(CMAKE_C_CLANG_TIDY "${CLANG_TIDY_EXECUTABLE}")
 endif()
 
+option(DOCVIEWER_WERROR "Treat compiler warnings as errors" OFF)
+set(DOCVIEWER_WARNINGS -Wall -Wextra -Wpedantic $<$<BOOL:${DOCVIEWER_WERROR}>:-Werror>)
+
 option(DOCVIEWER_ENABLE_SANITIZERS "Enable ASan and UBSan" OFF)
 if(DOCVIEWER_ENABLE_SANITIZERS AND NOT CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
   message(FATAL_ERROR "DOCVIEWER_ENABLE_SANITIZERS requires Clang or GCC")
@@ -47,7 +50,7 @@ set_target_properties(
              POSITION_INDEPENDENT_CODE ON
 )
 target_compile_features(docviewer_libretro PRIVATE c_std_11)
-target_compile_options(docviewer_libretro PRIVATE -Werror -Wall -Wextra -Wpedantic)
+target_compile_options(docviewer_libretro PRIVATE ${DOCVIEWER_WARNINGS})
 if(DOCVIEWER_ENABLE_SANITIZERS)
   target_compile_options(
     docviewer_libretro PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer

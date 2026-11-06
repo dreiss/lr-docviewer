@@ -17,6 +17,7 @@ _build type directory sanitizers:
   cmake -S . -B {{build_root}}/{{directory}} \
     -DCMAKE_BUILD_TYPE={{type}} \
     -DDOCVIEWER_ENABLE_CLANG_TIDY=ON \
+    -DDOCVIEWER_WERROR=ON \
     -DDOCVIEWER_ENABLE_SANITIZERS={{sanitizers}}
   cmake --build {{build_root}}/{{directory}} --parallel {{jobs}}
 
