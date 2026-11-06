@@ -108,7 +108,8 @@ def test_reset_clears_rotation(viewer: Viewer) -> None:
 
 def test_option_button_replaces_other_controls(viewer: Viewer) -> None:
     upright = viewer.run()
-    for button in ["up", "down", "left", "right", "x", "y", "b"]:
+    # A + B switches page modes; see test_page_modes.py.
+    for button in ["up", "down", "left", "right", "x", "y"]:
         viewer.run(10, a=True, **{button: True})
     viewer.run(a=True)
     assert viewer.run() == upright

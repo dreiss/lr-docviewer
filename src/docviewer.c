@@ -35,6 +35,28 @@
 
 // === State object
 
+enum page_mode {
+  PAGE_MODE_SINGLE,
+  // Two pages side by side: 1 and 2, 3 and 4, and so on.
+  PAGE_MODE_ODD_LEFT,
+  // Page 1 alone, then two pages side by side: 2 and 3, 4 and 5, and so on.
+  PAGE_MODE_EVEN_LEFT,
+  PAGE_MODE_COUNT,
+};
+
+/// A page on screen.
+struct shown_page {
+  int index;
+  // The backend's loaded page, or NULL for a placeholder for a page that couldn't be loaded.
+  void* page;
+  // Size in points.
+  double width;
+  double height;
+  // Position of the page's top-left corner in the spread, in points.
+  double x;
+  double y;
+};
+
 struct docviewer_state {
   retro_environment_t environment_cb;
   retro_video_refresh_t video_cb;
@@ -52,13 +74,16 @@ struct docviewer_state {
   cairo_surface_t* cached_preview;
 
   int page_count;
-  int page_index;
-  double page_width;
-  double page_height;
-  // The backend's loaded page, or NULL for a placeholder for a page that couldn't be loaded.
-  void* page;
-  // Whether the current page couldn't be loaded and is shown as a placeholder.
-  bool page_failed;
+  enum page_mode page_mode;
+  // The spread: the one or two pages on screen, side by side and touching.
+  struct shown_page shown[2];
+  int shown_count;
+  // The spread's size, in points.
+  double spread_width;
+  double spread_height;
+  // Size of the last page that loaded, for sizing placeholders; 0 before any has.
+  double last_page_width;
+  double last_page_height;
   // Quarter turns clockwise, from 0 to 3.  Kept across page turns.
   int rotation;
 
@@ -113,23 +138,33 @@ static double now_milliseconds(void) {
   return (double)time.tv_sec * 1000 + (double)time.tv_nsec / 1e6;
 }
 
-/// Returns the page's width as displayed, after rotation, in points.
+/// Returns the spread's width as displayed, after rotation, in points.
 static double view_width(void) {
-  return state.rotation % 2 ? state.page_height : state.page_width;
+  return state.rotation % 2 ? state.spread_height : state.spread_width;
 }
 
-/// Returns the page's height as displayed, after rotation, in points.
+/// Returns the spread's height as displayed, after rotation, in points.
 static double view_height(void) {
-  return state.rotation % 2 ? state.page_width : state.page_height;
+  return state.rotation % 2 ? state.spread_width : state.spread_height;
+}
+
+/// Returns the index of the first page on screen.
+static int first_shown(void) {
+  return state.shown[0].index;
+}
+
+/// Returns the index of the last page on screen.
+static int last_shown(void) {
+  return state.shown[state.shown_count - 1].index;
 }
 
 static double fit_scale(void) {
   return fmin(state.width / view_width(), state.height / view_height());
 }
 
-/// Turns a context whose origin is the displayed page's top-left corner, in points,
-/// so that drawing in page coordinates appears rotated.
-static void rotate_page(cairo_t* cr) {
+/// Turns a context whose origin is the displayed spread's top-left corner, in points,
+/// so that drawing in spread coordinates appears rotated.
+static void rotate_spread(cairo_t* cr) {
   // Exact matrices, rather than cairo_rotate(), keep fit-page frames pixel-exact.
   cairo_matrix_t matrix;
   switch (state.rotation) {
@@ -161,7 +196,7 @@ static const struct retro_input_descriptor bindings[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Pan down"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Pan left"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Pan right"},
-    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "Hold for options: L/R rotate"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "Hold for options: L/R rotate, B pages"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Help"},
     {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "Pan"},
     {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "Pan"},
@@ -298,13 +333,15 @@ void retro_unload_game(void) {
   if (state.framebuffer) {
     cairo_surface_destroy(state.framebuffer);
   }
-  if (state.backend && state.page) {
-    state.backend->close_page(state.page);
+  for (int i = 0; i < state.shown_count; i++) {
+    if (state.shown[i].page) {
+      state.backend->close_page(state.shown[i].page);
+    }
   }
+  state.shown_count = 0;
   if (state.backend && state.document) {
     state.backend->close(state.document);
   }
-  state.page = NULL;
   state.document = NULL;
   state.backend = NULL;
   state.framebuffer = NULL;
@@ -396,15 +433,38 @@ static void* load_page(int page_number, double* width, double* height) {
   return page;
 }
 
-/// Briefly shows the page number on screen.
-static void show_page_message(void) {
-  char text[64];
+/// Briefly shows the page numbers on screen, after an optional prefix.
+static void show_page_message(const char* prefix) {
+  int failed = 0;
+  int failed_index = 0;
+  for (int i = 0; i < state.shown_count; i++) {
+    if (!state.shown[i].page) {
+      failed++;
+      failed_index = state.shown[i].index;
+    }
+  }
+  char pages[64];
+  if (state.shown_count == 1) {
+    snprintf(pages, sizeof(pages), "Page %d of %d", first_shown() + 1, state.page_count);
+  } else {
+    snprintf(
+        pages,
+        sizeof(pages),
+        "Pages %d-%d of %d",
+        first_shown() + 1,
+        last_shown() + 1,
+        state.page_count
+    );
+  }
+  char problem[64] = "";
+  if (failed == state.shown_count) {
+    snprintf(problem, sizeof(problem), " couldn't be loaded");
+  } else if (failed) {
+    snprintf(problem, sizeof(problem), "; page %d couldn't be loaded", failed_index + 1);
+  }
+  char text[160];
   snprintf(
-      text,
-      sizeof(text),
-      state.page_failed ? "Page %d of %d couldn't be loaded" : "Page %d of %d",
-      state.page_index + 1,
-      state.page_count
+      text, sizeof(text), "%s%s%s%s", prefix ? prefix : "", prefix ? ": " : "", pages, problem
   );
   if (state.message_version >= 1) {
     // A status message replaces the previous one, instead of queueing behind it.
@@ -412,7 +472,7 @@ static void show_page_message(void) {
         .msg = text,
         .duration = PAGE_MESSAGE_MILLISECONDS,
         .priority = 1,
-        .level = state.page_failed ? RETRO_LOG_WARN : RETRO_LOG_INFO,
+        .level = failed ? RETRO_LOG_WARN : RETRO_LOG_INFO,
         .target = RETRO_MESSAGE_TARGET_OSD,
         .type = RETRO_MESSAGE_TYPE_STATUS,
         .progress = -1,
@@ -424,6 +484,17 @@ static void show_page_message(void) {
         .frames = PAGE_MESSAGE_MILLISECONDS * FRAMES_PER_SECOND / 1000,
     };
     state.environment_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+  }
+}
+
+/// Describes the pages on screen for log messages, like "page at index 2".
+static void describe_shown(char* text, size_t size) {
+  if (state.shown_count == 1) {
+    snprintf(text, size, "%s page at index %d", state.backend->name, first_shown());
+  } else {
+    snprintf(
+        text, size, "%s pages at index %d and %d", state.backend->name, first_shown(), last_shown()
+    );
   }
 }
 
@@ -445,26 +516,84 @@ static void show_help_hint(void) {
   state.environment_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &message);
 }
 
-/// Selects a page at fit-page zoom, or a placeholder if it can't be loaded,
-/// and shows its page number.
-static void select_page(int page_number) {
-  double width;
-  double height;
-  void* page = load_page(page_number, &width, &height);
-  if (state.page) {
-    state.backend->close_page(state.page);
+/// Returns the index of the first page of the spread that contains a page.
+static int spread_start(int page_index) {
+  switch (state.page_mode) {
+  case PAGE_MODE_ODD_LEFT:
+    return page_index - page_index % 2;
+  case PAGE_MODE_EVEN_LEFT:
+    return page_index == 0 ? 0 : page_index - (page_index - 1) % 2;
+  default:
+    return page_index;
   }
-  state.page = page;
-  state.page_failed = !page;
-  if (state.page_failed) {
-    // Keep the previous page's size, so the view doesn't jump.
-    bool have_previous = state.page_width > 0 && state.page_height > 0;
-    width = have_previous ? state.page_width : PLACEHOLDER_WIDTH;
-    height = have_previous ? state.page_height : PLACEHOLDER_HEIGHT;
+}
+
+/// Returns how many pages the spread starting at a page shows.
+static int spread_size(int start) {
+  if (state.page_mode == PAGE_MODE_SINGLE ||
+      (state.page_mode == PAGE_MODE_EVEN_LEFT && start == 0)) {
+    return 1;
   }
-  state.page_index = page_number;
-  state.page_width = width;
-  state.page_height = height;
+  return start + 1 < state.page_count ? 2 : 1;
+}
+
+/// Shows the spread that starts at a page, at fit-page zoom,
+/// with placeholders for pages that can't be loaded,
+/// and shows its page numbers after an optional prefix.
+static void select_spread(int start, const char* message_prefix) {
+  struct shown_page next[2];
+  int count = spread_size(start);
+  for (int i = 0; i < count; i++) {
+    next[i] = (struct shown_page){.index = start + i};
+    // Keep pages that are already loaded.
+    for (int j = 0; j < state.shown_count; j++) {
+      if (state.shown[j].page && state.shown[j].index == next[i].index) {
+        next[i] = state.shown[j];
+        state.shown[j].page = NULL;
+      }
+    }
+    if (!next[i].page) {
+      next[i].page = load_page(next[i].index, &next[i].width, &next[i].height);
+    }
+    if (next[i].page) {
+      state.last_page_width = next[i].width;
+      state.last_page_height = next[i].height;
+    }
+  }
+  for (int j = 0; j < state.shown_count; j++) {
+    if (state.shown[j].page) {
+      state.backend->close_page(state.shown[j].page);
+    }
+  }
+
+  // Size placeholders like a page beside them, or else the last page that loaded,
+  // so the view doesn't jump.
+  for (int i = 0; i < count; i++) {
+    if (next[i].page) {
+      continue;
+    }
+    const struct shown_page* other = count == 2 && next[1 - i].page ? &next[1 - i] : NULL;
+    bool have_last = state.last_page_width > 0 && state.last_page_height > 0;
+    next[i].width = other ? other->width : have_last ? state.last_page_width : PLACEHOLDER_WIDTH;
+    next[i].height = other       ? other->height
+                     : have_last ? state.last_page_height
+                                 : PLACEHOLDER_HEIGHT;
+  }
+
+  // Lay the pages out side by side, centered vertically.
+  state.spread_width = 0;
+  state.spread_height = 0;
+  for (int i = 0; i < count; i++) {
+    next[i].x = state.spread_width;
+    state.spread_width += next[i].width;
+    state.spread_height = fmax(state.spread_height, next[i].height);
+  }
+  for (int i = 0; i < count; i++) {
+    next[i].y = (state.spread_height - next[i].height) / 2;
+    state.shown[i] = next[i];
+  }
+  state.shown_count = count;
+
   state.zoom_frames = 0;
   state.zoom_factor = 1;
   state.pan_x = 0;
@@ -473,27 +602,39 @@ static void select_page(int page_number) {
     cairo_surface_destroy(state.cached_preview);
     state.cached_preview = NULL;
   }
-  if (!state.page_failed && state.backend->prefer_cached_preview) {
+  if (state.backend->prefer_cached_preview) {
     create_cached_preview();
   }
-  show_page_message();
+  show_page_message(message_prefix);
 }
 
-/// Turns forward or back by some pages, stopping at the first and last pages.
-/// Returns true if a different page was selected.
-static bool turn_page(int delta) {
-  int page = state.page_index + delta;
-  if (page < 0) {
-    page = 0;
+/// Shows the spread that contains a page, stopping at the first and last pages.
+/// Returns true if a different spread was selected.
+static bool go_to_page(int page_index) {
+  if (page_index < 0) {
+    page_index = 0;
   }
-  if (page > state.page_count - 1) {
-    page = state.page_count - 1;
+  if (page_index > state.page_count - 1) {
+    page_index = state.page_count - 1;
   }
-  if (page == state.page_index) {
+  int start = spread_start(page_index);
+  if (start == first_shown()) {
     return false;
   }
-  select_page(page);
+  select_spread(start, NULL);
   return true;
+}
+
+/// Switches to the next page mode, keeping the first page on screen.
+static void cycle_page_mode(void) {
+  static const char* const names[PAGE_MODE_COUNT] = {
+      [PAGE_MODE_SINGLE] = "One page",
+      [PAGE_MODE_ODD_LEFT] = "Two pages, odd on left",
+      [PAGE_MODE_EVEN_LEFT] = "Two pages, even on left",
+  };
+  int first = first_shown();
+  state.page_mode = (enum page_mode)((state.page_mode + 1) % PAGE_MODE_COUNT);
+  select_spread(spread_start(first), names[state.page_mode]);
 }
 
 /// Rotates the view by quarter turns, positive for clockwise,
@@ -525,8 +666,44 @@ enum render_mode {
 
 // === Rendering
 
+/// Fills behind each page on screen, in spread coordinates:
+/// white for transparent areas of loaded pages, and black for placeholders.
+static void fill_backings(cairo_t* cr) {
+  for (int i = 0; i < state.shown_count; i++) {
+    const struct shown_page* page = &state.shown[i];
+    double backing = page->page ? 1 : 0;
+    cairo_set_source_rgb(cr, backing, backing, backing);
+    cairo_rectangle(cr, page->x, page->y, page->width, page->height);
+    cairo_fill(cr);
+  }
+}
+
+/// Renders the loaded pages on screen, in spread coordinates.
+/// Returns false if any failed to render.
+static bool draw_pages(cairo_t* cr) {
+  bool rendered = true;
+  for (int i = 0; i < state.shown_count; i++) {
+    const struct shown_page* page = &state.shown[i];
+    if (!page->page) {
+      continue;
+    }
+    cairo_save(cr);
+    cairo_translate(cr, page->x, page->y);
+    rendered &= state.backend->render(page->page, cr);
+    cairo_restore(cr);
+  }
+  return rendered;
+}
+
 /// Returns true if a fit-to-screen preview was rendered and cached.
 static bool create_cached_preview(void) {
+  bool any_loaded = false;
+  for (int i = 0; i < state.shown_count; i++) {
+    any_loaded |= state.shown[i].page != NULL;
+  }
+  if (!any_loaded) {
+    return false;
+  }
   double start = now_milliseconds();
   // Allocate a screen-sized surface to render as a preview when panning/zooming.
   cairo_surface_t* preview =
@@ -548,8 +725,9 @@ static bool create_cached_preview(void) {
   // Render at the appropriate scale.
   double preview_scale = fit_scale();
   cairo_scale(cr, preview_scale, preview_scale);
-  rotate_page(cr);
-  bool rendered = state.backend->render(state.page, cr);
+  rotate_spread(cr);
+  fill_backings(cr);
+  bool rendered = draw_pages(cr);
   cairo_status_t context_status = cairo_status(cr);
   cairo_destroy(cr);
   cairo_surface_flush(preview);
@@ -568,20 +746,19 @@ static bool create_cached_preview(void) {
     cairo_surface_destroy(preview);
     return false;
   }
+  char shown[64];
+  describe_shown(shown, sizeof(shown));
   if (!rendered) {
     LOG(RETRO_LOG_WARN,
-        "Document Viewer: Could not render %s page at index %d into cached preview; "
-        "rendering directly\n",
-        state.backend->name,
-        state.page_index);
+        "Document Viewer: Could not render %s into cached preview; rendering directly\n",
+        shown);
     cairo_surface_destroy(preview);
     return false;
   }
   state.cached_preview = preview;
   LOG(RETRO_LOG_DEBUG,
-      "Document Viewer: Rendered %s page at index %d as a preview in %.1f ms\n",
-      state.backend->name,
-      state.page_index,
+      "Document Viewer: Rendered %s as a preview in %.1f ms\n",
+      shown,
       now_milliseconds() - start);
   return true;
 }
@@ -594,6 +771,7 @@ static void draw_help(cairo_t* cr) {
       {"Y / X", "Zoom in / out"},
       {"D-pad, left stick", "Pan"},
       {"A + L / R", "Rotate counterclockwise / clockwise"},
+      {"A + B", "One or two pages, odd or even on left"},
       {"Start", "Show or hide this help"},
   };
   const int count = sizeof(controls) / sizeof(*controls);
@@ -665,23 +843,21 @@ static double render_frame(enum render_mode mode) {
   double page_y = round((state.height - scaled_page_height) / 2 - state.pan_y * scale);
   cairo_translate(cr, page_x, page_y);
   cairo_scale(cr, scale, scale);
-  rotate_page(cr);
+  rotate_spread(cr);
 
-  // Fill in white background as backing for transparent pixels,
-  // or black for a page that couldn't be loaded.
-  double backing = state.page_failed ? 0 : 1;
-  cairo_set_source_rgb(cr, backing, backing, backing);
-  cairo_rectangle(cr, 0, 0, state.page_width, state.page_height);
-  cairo_fill(cr);
+  fill_backings(cr);
 
   bool rendered = true;
-  // Placeholders have no cached preview.
+  // Spreads of only placeholders have no cached preview.
   bool use_cached_preview = mode == RENDER_INTERACTIVE && state.cached_preview;
   if (use_cached_preview) {
     // While panning/zooming, just render the cached preview
     // to avoid blocking on a slow renderer.
     cairo_save(cr);
-    cairo_rectangle(cr, 0, 0, state.page_width, state.page_height);
+    for (int i = 0; i < state.shown_count; i++) {
+      const struct shown_page* page = &state.shown[i];
+      cairo_rectangle(cr, page->x, page->y, page->width, page->height);
+    }
     cairo_clip(cr);
     // Build the transform without dividing by the preview scale,
     // so it's exact at fit-page zoom.
@@ -695,8 +871,8 @@ static double render_frame(enum render_mode mode) {
     cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
     cairo_paint(cr);
     cairo_restore(cr);
-  } else if (!state.page_failed) {
-    rendered = state.backend->render(state.page, cr);
+  } else {
+    rendered = draw_pages(cr);
   }
   if (state.help_visible) {
     draw_help(cr);
@@ -714,10 +890,9 @@ static double render_frame(enum render_mode mode) {
         "Document Viewer: Could not finish frame: %s\n",
         cairo_status_to_string(surface_status));
   } else if (!rendered) {
-    LOG(RETRO_LOG_ERROR,
-        "Document Viewer: Could not render %s page at index %d\n",
-        state.backend->name,
-        state.page_index);
+    char shown[64];
+    describe_shown(shown, sizeof(shown));
+    LOG(RETRO_LOG_ERROR, "Document Viewer: Could not render %s\n", shown);
   }
   // At fit-page zoom, the copied preview is already the full-quality view.
   state.settled_render_pending = use_cached_preview && state.zoom_factor != 1;
@@ -727,10 +902,11 @@ static double render_frame(enum render_mode mode) {
 
 /// Logs how long a frame took to draw.
 static void log_frame(double milliseconds) {
+  char shown[64];
+  describe_shown(shown, sizeof(shown));
   LOG(RETRO_LOG_DEBUG,
-      "Document Viewer: Drew %s page at index %d at %.2fx zoom in %.1f ms\n",
-      state.backend->name,
-      state.page_index,
+      "Document Viewer: Drew %s at %.2fx zoom in %.1f ms\n",
+      shown,
       state.zoom_factor,
       milliseconds);
 }
@@ -840,17 +1016,21 @@ static struct input_result process_input(void) {
     rotate_view(1);
     view_changed = true;
   }
+  if (option_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_B)) {
+    cycle_page_mode();
+    view_changed = true;
+  }
   if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_L)) {
-    view_changed |= turn_page(-1);
+    view_changed |= go_to_page(first_shown() - 1);
   }
   if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_R)) {
-    view_changed |= turn_page(1);
+    view_changed |= go_to_page(last_shown() + 1);
   }
   if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_L2)) {
-    view_changed |= turn_page(-PAGE_JUMP);
+    view_changed |= go_to_page(first_shown() - PAGE_JUMP);
   }
   if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_R2)) {
-    view_changed |= turn_page(PAGE_JUMP);
+    view_changed |= go_to_page(first_shown() + PAGE_JUMP);
   }
 
   int zoom_frames = state.zoom_frames + !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_Y)) -
@@ -1005,10 +1185,11 @@ bool retro_load_game(const struct retro_game_info* game) {
 
   state.previous_buttons = 0;
   state.help_visible = false;
-  state.page_width = 0;
-  state.page_height = 0;
+  state.last_page_width = 0;
+  state.last_page_height = 0;
   state.rotation = 0;
-  select_page(0);
+  state.page_mode = PAGE_MODE_SINGLE;
+  select_spread(0, NULL);
   show_help_hint();
   log_frame(render_frame(RENDER_INTERACTIVE));
   return true;
@@ -1018,7 +1199,8 @@ void retro_reset(void) {
   if (state.document) {
     state.help_visible = false;
     state.rotation = 0;
-    select_page(0);
+    state.page_mode = PAGE_MODE_SINGLE;
+    select_spread(0, NULL);
     log_frame(render_frame(RENDER_INTERACTIVE));
   }
 }
