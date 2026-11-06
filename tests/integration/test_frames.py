@@ -49,3 +49,25 @@ def test_every_frame_is_new_without_dupe_support(
         viewer.run(5)
         viewer.tap("r")
         assert viewer.video.refreshes == [NEW] * 7
+
+
+def test_pdf_page_turn_at_fit_renders_once(core: Core, tmp_path: pathlib.Path) -> None:
+    pdf = write_pdf(tmp_path / "pages.pdf", [PdfPage(612, 792, grid=True)] * 2)
+    with core.open(pdf) as viewer:
+        viewer.run(3)
+        before = len(viewer.video.refreshes)
+        viewer.run(r=True)
+        viewer.run(3)
+        # At fit-page zoom, the preview is already final.
+        assert viewer.video.refreshes[before:] == [NEW] + [REPEAT] * 3
+
+
+def test_pdf_zoom_renders_final_view_once_idle(core: Core, tmp_path: pathlib.Path) -> None:
+    pdf = write_pdf(tmp_path / "page.pdf", [PdfPage(612, 792, grid=True)])
+    with core.open(pdf) as viewer:
+        viewer.run(3)
+        before = len(viewer.video.refreshes)
+        viewer.run(x=True)
+        viewer.run(3)
+        # The preview while zooming, then the full-quality view.
+        assert viewer.video.refreshes[before:] == [NEW, NEW] + [REPEAT] * 2

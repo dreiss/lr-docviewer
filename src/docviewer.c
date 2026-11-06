@@ -338,11 +338,11 @@ static void render_frame(enum render_mode mode) {
   double scale = preview_scale * state.zoom_factor;
   double scaled_page_width = state.page_width * scale;
   double scaled_page_height = state.page_height * scale;
-  cairo_translate(
-      cr,
-      (DOCVIEWER_WIDTH - scaled_page_width) / 2 - state.pan_x * scale,
-      (DOCVIEWER_HEIGHT - scaled_page_height) / 2 - state.pan_y * scale
-  );
+  // Put the page's corner on a whole pixel,
+  // so at fit-page zoom the preview can be copied pixel for pixel.
+  double page_x = round((DOCVIEWER_WIDTH - scaled_page_width) / 2 - state.pan_x * scale);
+  double page_y = round((DOCVIEWER_HEIGHT - scaled_page_height) / 2 - state.pan_y * scale);
+  cairo_translate(cr, page_x, page_y);
   cairo_scale(cr, scale, scale);
 
   // Fill in white background as backing for transparent pixels,
@@ -361,7 +361,11 @@ static void render_frame(enum render_mode mode) {
     cairo_save(cr);
     cairo_rectangle(cr, 0, 0, state.page_width, state.page_height);
     cairo_clip(cr);
-    cairo_scale(cr, 1 / preview_scale, 1 / preview_scale);
+    // Build the transform without dividing by the preview scale,
+    // so it's exact at fit-page zoom.
+    cairo_identity_matrix(cr);
+    cairo_translate(cr, page_x, page_y);
+    cairo_scale(cr, state.zoom_factor, state.zoom_factor);
     cairo_set_source_surface(cr, state.cached_preview, 0, 0);
     cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
     cairo_paint(cr);
@@ -387,7 +391,8 @@ static void render_frame(enum render_mode mode) {
         state.backend->name,
         state.page_index);
   }
-  state.settled_render_pending = use_cached_preview;
+  // At fit-page zoom, the copied preview is already the full-quality view.
+  state.settled_render_pending = use_cached_preview && state.zoom_factor != 1;
   state.frame_changed = true;
 }
 
