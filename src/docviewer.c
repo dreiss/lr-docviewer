@@ -26,6 +26,7 @@
 #define PLACEHOLDER_WIDTH 612
 #define PLACEHOLDER_HEIGHT 792
 #define PAGE_MESSAGE_MILLISECONDS 2000
+#define HELP_HINT_MILLISECONDS 4000
 #define FRAMES_PER_SECOND 60
 
 // === State object
@@ -62,6 +63,7 @@ struct docviewer_state {
   double pan_y;
 
   unsigned previous_buttons;
+  bool help_visible;
   bool settled_render_pending;
   // Whether the frontend accepts NULL to repeat the previous frame.
   bool can_dupe;
@@ -151,6 +153,7 @@ static const struct retro_input_descriptor bindings[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Pan left"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Pan right"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "Hold for options: L/R rotate"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START, "Help"},
     {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "Pan"},
     {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "Pan"},
     {0, 0, 0, 0, NULL}
@@ -333,6 +336,24 @@ static void show_page_message(void) {
   }
 }
 
+/// Briefly suggests the help screen, if the frontend can show it alongside the page number.
+static void show_help_hint(void) {
+  // Older frontends replace one message with the next, so only the page number is shown.
+  if (state.message_version < 1) {
+    return;
+  }
+  struct retro_message_ext message = {
+      .msg = "Press Start for help",
+      .duration = HELP_HINT_MILLISECONDS,
+      .priority = 1,
+      .level = RETRO_LOG_INFO,
+      .target = RETRO_MESSAGE_TARGET_OSD,
+      .type = RETRO_MESSAGE_TYPE_NOTIFICATION,
+      .progress = -1,
+  };
+  state.environment_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &message);
+}
+
 /// Selects a page at fit-page zoom, or a placeholder if it can't be loaded,
 /// and shows its page number.
 static void select_page(int page_number) {
@@ -469,6 +490,65 @@ static bool create_cached_preview(void) {
   return true;
 }
 
+/// Draws the help screen over the whole frame.
+static void draw_help(cairo_t* cr) {
+  static const char* const controls[][2] = {
+      {"L / R", "Previous / next page"},
+      {"L2 / R2", "Back / forward 10 pages"},
+      {"Y / X", "Zoom in / out"},
+      {"D-pad, left stick", "Pan"},
+      {"A + L / R", "Rotate counterclockwise / clockwise"},
+      {"Start", "Show or hide this help"},
+  };
+  const int count = sizeof(controls) / sizeof(*controls);
+
+  cairo_identity_matrix(cr);
+  cairo_reset_clip(cr);
+  cairo_set_source_rgba(cr, 0, 0, 0, 0.75);
+  cairo_paint(cr);
+
+  double size = DOCVIEWER_HEIGHT / 24.0;
+  double line = size * 1.6;
+  double gap = size;
+  cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+  cairo_set_font_size(cr, size);
+  double button_width = 0;
+  for (int i = 0; i < count; i++) {
+    cairo_text_extents_t extents;
+    cairo_text_extents(cr, controls[i][0], &extents);
+    button_width = fmax(button_width, extents.x_advance);
+  }
+  cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+  double action_width = 0;
+  for (int i = 0; i < count; i++) {
+    cairo_text_extents_t extents;
+    cairo_text_extents(cr, controls[i][1], &extents);
+    action_width = fmax(action_width, extents.x_advance);
+  }
+
+  // Center the title, the table, and the closing note as one block.
+  double left = round((DOCVIEWER_WIDTH - (button_width + gap + action_width)) / 2);
+  double y = round((DOCVIEWER_HEIGHT - line * (count + 3)) / 2 + size);
+  cairo_set_source_rgb(cr, 1, 1, 1);
+  cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+  cairo_move_to(cr, left, y);
+  cairo_show_text(cr, "Controls");
+  y += line * 1.5;
+  for (int i = 0; i < count; i++) {
+    cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_move_to(cr, left, y);
+    cairo_show_text(cr, controls[i][0]);
+    cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_move_to(cr, left + button_width + gap, y);
+    cairo_show_text(cr, controls[i][1]);
+    y += line;
+  }
+  y += line * 0.5;
+  cairo_set_source_rgb(cr, 0.75, 0.75, 0.75);
+  cairo_move_to(cr, left, y);
+  cairo_show_text(cr, "Press any button to close.");
+}
+
 /// Draws the current view into the framebuffer and returns how long it took, in milliseconds.
 static double render_frame(enum render_mode mode) {
   double start = now_milliseconds();
@@ -521,6 +601,9 @@ static double render_frame(enum render_mode mode) {
     cairo_restore(cr);
   } else if (!state.page_failed) {
     rendered = state.backend->render(state.document, cr);
+  }
+  if (state.help_visible) {
+    draw_help(cr);
   }
   cairo_status_t context_status = cairo_status(cr);
   cairo_destroy(cr);
@@ -623,6 +706,19 @@ static struct input_result process_input(void) {
   }
   unsigned just_pressed = buttons & ~state.previous_buttons;
   state.previous_buttons = buttons;
+
+  // The help screen takes all input, and the press that closes it does nothing else.
+  if (state.help_visible) {
+    if (just_pressed) {
+      state.help_visible = false;
+      return (struct input_result){.view_changed = true};
+    }
+    return (struct input_result){0};
+  }
+  if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_START)) {
+    state.help_visible = true;
+    return (struct input_result){.view_changed = true};
+  }
 
   // Holding A gives these buttons other meanings.
   const unsigned option_buttons =
@@ -801,16 +897,19 @@ bool retro_load_game(const struct retro_game_info* game) {
   }
 
   state.previous_buttons = 0;
+  state.help_visible = false;
   state.page_width = 0;
   state.page_height = 0;
   state.rotation = 0;
   select_page(0);
+  show_help_hint();
   log_frame(render_frame(RENDER_INTERACTIVE));
   return true;
 }
 
 void retro_reset(void) {
   if (state.document) {
+    state.help_visible = false;
     state.rotation = 0;
     select_page(0);
     log_frame(render_frame(RENDER_INTERACTIVE));

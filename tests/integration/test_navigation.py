@@ -93,7 +93,7 @@ def test_l2_and_r2_jump_ten_pages(core: Core, tmp_path: pathlib.Path) -> None:
         viewer.tap("r")
         viewer.tap("l2", times=3)
         assert viewer.messages is not None
-        assert viewer.messages.texts() == [
+        assert viewer.messages.page_numbers() == [
             "Page 1 of 25",
             "Page 11 of 25",
             "Page 21 of 25",

@@ -109,6 +109,12 @@ class MessageRecorder(MessageDriver):
     def texts(self) -> list[str]:
         return [message.text for message in self.messages]
 
+    def page_numbers(self) -> list[str]:
+        """Returns the page indicator's messages, leaving out the startup hint."""
+        return [
+            message.text for message in self.messages if message.type != MessageType.NOTIFICATION
+        ]
+
 
 class LogShim:
     """Formats the core's printf-style log messages in C before Python sees them.

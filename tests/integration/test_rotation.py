@@ -73,7 +73,7 @@ def test_rotation_turns_the_page(viewer: Viewer, button: str, corner: str) -> No
     assert_corner(frame, top_left(frame), corner)
     # Holding A, L and R rotate instead of turning pages.
     assert viewer.messages is not None
-    assert viewer.messages.texts() == ["Page 1 of 2"]
+    assert viewer.messages.page_numbers() == ["Page 1 of 2"]
 
 
 def test_half_turn(viewer: Viewer) -> None:
@@ -113,7 +113,7 @@ def test_option_button_replaces_other_controls(viewer: Viewer) -> None:
     viewer.run(a=True)
     assert viewer.run() == upright
     assert viewer.messages is not None
-    assert viewer.messages.texts() == ["Page 1 of 2"]
+    assert viewer.messages.page_numbers() == ["Page 1 of 2"]
 
 
 def test_rotation_keeps_the_centered_spot(viewer: Viewer) -> None:

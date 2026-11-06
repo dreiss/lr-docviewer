@@ -18,22 +18,31 @@ def document(tmp_path: pathlib.Path) -> pathlib.Path:
     return write_pdf(tmp_path / "pages.pdf", [PdfPage(600, 600, grid=True)] * PAGES)
 
 
-def texts(viewer: Viewer) -> list[str]:
+HINT = Message(
+    text="Press Start for help",
+    duration=4000,
+    level=LogLevel.INFO,
+    target=MessageTarget.OSD,
+    type=MessageType.NOTIFICATION,
+)
+
+
+def page_numbers(viewer: Viewer) -> list[str]:
     assert viewer.messages is not None
-    return viewer.messages.texts()
+    return viewer.messages.page_numbers()
 
 
 def test_page_number_is_shown_on_load_and_page_turns(core: Core, document: pathlib.Path) -> None:
     with core.open(document) as viewer:
         viewer.run()
-        assert texts(viewer) == ["Page 1 of 3"]
+        assert page_numbers(viewer) == ["Page 1 of 3"]
         viewer.tap("r")
         viewer.tap("r")
         viewer.tap("l")
-        assert texts(viewer) == ["Page 1 of 3", "Page 2 of 3", "Page 3 of 3", "Page 2 of 3"]
+        assert page_numbers(viewer) == ["Page 1 of 3", "Page 2 of 3", "Page 3 of 3", "Page 2 of 3"]
 
 
-def test_page_number_is_a_brief_on_screen_status(core: Core, document: pathlib.Path) -> None:
+def test_opening_shows_the_page_number_and_a_help_hint(core: Core, document: pathlib.Path) -> None:
     with core.open(document) as viewer:
         viewer.run()
         assert viewer.messages is not None
@@ -44,7 +53,8 @@ def test_page_number_is_a_brief_on_screen_status(core: Core, document: pathlib.P
                 level=LogLevel.INFO,
                 target=MessageTarget.OSD,
                 type=MessageType.STATUS,
-            )
+            ),
+            HINT,
         ]
 
 
@@ -56,14 +66,14 @@ def test_no_page_number_without_a_page_change(core: Core, document: pathlib.Path
         viewer.tap("x")
         viewer.tap("r", times=PAGES - 1)
         viewer.tap("r")
-        assert texts(viewer) == ["Page 1 of 3", "Page 2 of 3", "Page 3 of 3"]
+        assert page_numbers(viewer) == ["Page 1 of 3", "Page 2 of 3", "Page 3 of 3"]
 
 
 def test_reset_shows_the_first_page_number(core: Core, document: pathlib.Path) -> None:
     with core.open(document) as viewer:
         viewer.tap("r")
         viewer.reset()
-        assert texts(viewer)[-1] == "Page 1 of 3"
+        assert page_numbers(viewer)[-1] == "Page 1 of 3"
 
 
 def test_unreadable_page_is_announced(core: Core, tmp_path: pathlib.Path) -> None:
@@ -91,3 +101,10 @@ def test_viewer_works_without_on_screen_messages(core: Core, document: pathlib.P
     with core.open(document, message_version=None) as viewer:
         first = viewer.run()
         assert viewer.tap("r") != first
+
+
+def test_reset_shows_no_help_hint(core: Core, document: pathlib.Path) -> None:
+    with core.open(document) as viewer:
+        viewer.reset()
+        assert viewer.messages is not None
+        assert viewer.messages.messages.count(HINT) == 1

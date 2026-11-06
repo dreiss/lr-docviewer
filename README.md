@@ -28,11 +28,13 @@ Controls, in RetroArch's SNES-style button names
 | Y / X | Zoom in / out |
 | D-pad or left stick | Pan the enlarged page |
 | A + L / R | Rotate counterclockwise / clockwise |
+| Start | Show or hide help |
 
 A is an option button:
 while it's held, L and R rotate the view instead of turning pages,
 and the d-pad, X, Y, and B do nothing.
 Rotation stays the same when you turn pages.
+While help is shown, any button closes it.
 Page buttons act once per press.
 Holding a zoom button doubles or halves the zoom every second,
 and panning is continuous.
