@@ -6,6 +6,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include <cairo.h>
 
@@ -57,6 +58,11 @@ struct docviewer_state {
   bool frame_changed;
   // The frontend's message interface version: 1 or more supports retro_message_ext.
   unsigned message_version;
+
+  // Frames drawn while zoom or pan buttons were held, for a timing summary.
+  int gesture_frames;
+  double gesture_milliseconds;
+  double gesture_slowest_milliseconds;
 };
 
 static struct docviewer_state state;
@@ -76,6 +82,13 @@ static bool create_cached_preview(void);
 
 static double clamp(double value, double low, double high) {
   return fmax(low, fmin(value, high));
+}
+
+/// Returns a monotonic time in milliseconds, for measuring durations.
+static double now_milliseconds(void) {
+  struct timespec time;
+  clock_gettime(CLOCK_MONOTONIC, &time);
+  return (double)time.tv_sec * 1000 + (double)time.tv_nsec / 1e6;
 }
 
 static double fit_scale(void) {
@@ -158,6 +171,9 @@ void retro_unload_game(void) {
   state.framebuffer = NULL;
   state.cached_preview = NULL;
   state.settled_render_pending = false;
+  state.gesture_frames = 0;
+  state.gesture_milliseconds = 0;
+  state.gesture_slowest_milliseconds = 0;
 }
 
 void retro_deinit(void) {
@@ -212,6 +228,7 @@ static const struct document_vtable* find_backend(const char* path) {
 
 /// Returns true if the requested page was loaded with valid dimensions.
 static bool load_page(int page_number, double* width, double* height) {
+  double start = now_milliseconds();
   if (!state.backend->load_page(state.document, page_number, width, height)) {
     LOG(RETRO_LOG_ERROR,
         "Document Viewer: Could not load %s page at index %d; showing a placeholder\n",
@@ -230,6 +247,11 @@ static bool load_page(int page_number, double* width, double* height) {
         *height);
     return false;
   }
+  LOG(RETRO_LOG_DEBUG,
+      "Document Viewer: Loaded %s page at index %d in %.1f ms\n",
+      state.backend->name,
+      page_number,
+      now_milliseconds() - start);
   return true;
 }
 
@@ -313,6 +335,7 @@ enum render_mode {
 
 /// Returns true if a fit-to-screen preview was rendered and cached.
 static bool create_cached_preview(void) {
+  double start = now_milliseconds();
   // Allocate a screen-sized surface to render as a preview when panning/zooming.
   cairo_surface_t* preview =
       cairo_image_surface_create(CAIRO_FORMAT_RGB24, DOCVIEWER_WIDTH, DOCVIEWER_HEIGHT);
@@ -362,10 +385,17 @@ static bool create_cached_preview(void) {
     return false;
   }
   state.cached_preview = preview;
+  LOG(RETRO_LOG_DEBUG,
+      "Document Viewer: Rendered %s page at index %d as a preview in %.1f ms\n",
+      state.backend->name,
+      state.page_index,
+      now_milliseconds() - start);
   return true;
 }
 
-static void render_frame(enum render_mode mode) {
+/// Draws the current view into the framebuffer and returns how long it took, in milliseconds.
+static double render_frame(enum render_mode mode) {
+  double start = now_milliseconds();
   cairo_t* cr = cairo_create(state.framebuffer);
 
   // Fill with background color (to show outside of the document).
@@ -436,6 +466,41 @@ static void render_frame(enum render_mode mode) {
   // At fit-page zoom, the copied preview is already the full-quality view.
   state.settled_render_pending = use_cached_preview && state.zoom_factor != 1;
   state.frame_changed = true;
+  return now_milliseconds() - start;
+}
+
+/// Logs how long a frame took to draw.
+static void log_frame(double milliseconds) {
+  LOG(RETRO_LOG_DEBUG,
+      "Document Viewer: Drew %s page at index %d at %.2fx zoom in %.1f ms\n",
+      state.backend->name,
+      state.page_index,
+      state.zoom_factor,
+      milliseconds);
+}
+
+/// Adds a frame drawn during a zoom or pan gesture to the gesture's timing summary.
+static void record_gesture_frame(double milliseconds) {
+  state.gesture_frames++;
+  state.gesture_milliseconds += milliseconds;
+  state.gesture_slowest_milliseconds = fmax(state.gesture_slowest_milliseconds, milliseconds);
+}
+
+/// Logs and clears the timing summary of a finished zoom or pan gesture.
+static void log_gesture(void) {
+  if (state.gesture_frames == 0) {
+    return;
+  }
+  LOG(RETRO_LOG_DEBUG,
+      "Document Viewer: Drew %d %s while zooming or panning "
+      "in %.1f ms on average and %.1f ms at most\n",
+      state.gesture_frames,
+      state.gesture_frames == 1 ? "frame" : "frames",
+      state.gesture_milliseconds / state.gesture_frames,
+      state.gesture_slowest_milliseconds);
+  state.gesture_frames = 0;
+  state.gesture_milliseconds = 0;
+  state.gesture_slowest_milliseconds = 0;
 }
 
 // === Input handling
@@ -511,10 +576,18 @@ void retro_run(void) {
     return;
   }
   struct input_result input = process_input();
+  if (!input.view_controls_held) {
+    log_gesture();
+  }
   if (input.view_changed) {
-    render_frame(RENDER_INTERACTIVE);
+    double milliseconds = render_frame(RENDER_INTERACTIVE);
+    if (input.view_controls_held) {
+      record_gesture_frame(milliseconds);
+    } else {
+      log_frame(milliseconds);
+    }
   } else if (!input.view_controls_held && state.settled_render_pending) {
-    render_frame(RENDER_SETTLED);
+    log_frame(render_frame(RENDER_SETTLED));
   }
 
   // Repeating the previous frame avoids copying an unchanged framebuffer.
@@ -559,6 +632,7 @@ bool retro_load_game(const struct retro_game_info* game) {
           : 0;
 
   state.backend = backend;
+  double start = now_milliseconds();
   state.document = backend->open(game->path, document_log);
   state.page_count = 0;
   if (state.document) {
@@ -569,6 +643,12 @@ bool retro_load_game(const struct retro_game_info* game) {
     retro_unload_game();
     return false;
   }
+  LOG(RETRO_LOG_DEBUG,
+      "Document Viewer: Opened %s with %d %s in %.1f ms\n",
+      game->path,
+      state.page_count,
+      state.page_count == 1 ? "page" : "pages",
+      now_milliseconds() - start);
   state.framebuffer =
       cairo_image_surface_create(CAIRO_FORMAT_RGB24, DOCVIEWER_WIDTH, DOCVIEWER_HEIGHT);
   cairo_status_t frame_status = cairo_surface_status(state.framebuffer);
@@ -586,13 +666,13 @@ bool retro_load_game(const struct retro_game_info* game) {
   state.page_width = 0;
   state.page_height = 0;
   select_page(0);
-  render_frame(RENDER_INTERACTIVE);
+  log_frame(render_frame(RENDER_INTERACTIVE));
   return true;
 }
 
 void retro_reset(void) {
   if (state.document) {
     select_page(0);
-    render_frame(RENDER_INTERACTIVE);
+    log_frame(render_frame(RENDER_INTERACTIVE));
   }
 }

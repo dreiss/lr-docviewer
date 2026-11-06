@@ -34,6 +34,11 @@ Close the viewer with your normal RetroArch exit hotkey.
 Output is 1920 x 1080, which RetroArch scales to the screen,
 and zoom ranges from fit-page to 8 times that.
 Rendering is synchronous, so complex PDFs may briefly pause input.
+With RetroArch's logging verbosity on
+and its core logging level set to Debug,
+the core logs how long opening the document, loading each page,
+rendering each PDF preview, and drawing each frame take,
+with one summary for each zoom or pan gesture.
 Password-protected PDFs are rejected,
 and there's no search, table of contents, or links.
 A manual opens as separate RetroArch content,
