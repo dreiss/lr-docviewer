@@ -18,6 +18,28 @@ On the first idle frame, Poppler renders the visible view
 directly into the framebuffer at full quality.
 CBZ pages are transformed directly from their decoded image surface.
 
+Controls, in RetroArch's SNES-style button names
+(remap them in RetroArch):
+
+| Control | Action |
+|---|---|
+| L / R | Previous / next page |
+| X / Y | Zoom in / out |
+| D-pad | Pan the enlarged page |
+
+Page and zoom buttons act once per press; panning is continuous.
+RetroArch's Reset returns to the first page at fit-page zoom.
+Close the viewer with your normal RetroArch exit hotkey.
+
+Output is 1920 x 1080, which RetroArch scales to the screen,
+and zoom ranges from fit-page to 8 times that.
+Rendering is synchronous, so complex PDFs may briefly pause input.
+Password-protected PDFs are rejected,
+and there's no search, table of contents, or links.
+A manual opens as separate RetroArch content,
+not as an overlay on a running game.
+The core doesn't open a window or need X11 or Wayland.
+
 Build commands:
 
 ```sh
@@ -35,6 +57,9 @@ and its info file into `<datadir>/libretro/info`,
 under the install prefix (`/usr/local` by default).
 Set `DOCVIEWER_INSTALL_COREDIR` and `DOCVIEWER_INSTALL_INFODIR`
 to match your RetroArch's core and core info directories.
+Build for the same architecture as RetroArch:
+a 64-bit core can't load into a 32-bit RetroArch, or the reverse.
+`file` shows each binary's architecture.
 
 Development additionally uses `just`, clang-format, and clang-tidy.
 Its builds treat warnings as errors.
@@ -47,3 +72,6 @@ just pytest           # build the debug core and run the tests
 just pytest-sanitize  # the same, against an ASan/UBSan build
 just pytest -k cbz    # pass arguments through to pytest
 ```
+
+The project is licensed under GPL-3.0-or-later; see `LICENSE`.
+`libretro.h`, from the libretro-common submodule, keeps its own license.
