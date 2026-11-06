@@ -581,8 +581,12 @@ static bool render(void* opaque_document, cairo_t* cr) {
     cairo_rectangle(cr, 0, 0, document->image_width, document->image_height);
     cairo_fill(cr);
   } else {
+    // Filter enlarged images with repeated edge pixels, and draw only the image's area,
+    // so the image neither fades at its edges nor bleeds past them.
     cairo_set_source_surface(cr, document->image, 0, 0);
-    cairo_paint(cr);
+    cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
+    cairo_rectangle(cr, 0, 0, document->image_width, document->image_height);
+    cairo_fill(cr);
   }
   cairo_status_t status = cairo_status(cr);
   if (status != CAIRO_STATUS_SUCCESS) {

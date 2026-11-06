@@ -149,3 +149,17 @@ def test_hidden_and_macos_entries_are_not_pages(core: Core, tmp_path: pathlib.Pa
         assert page_size(last) == (WIDTH, WIDTH // 3)
         assert last.pixel(WIDTH // 2, HEIGHT // 2) == blue
         assert viewer.tap("r") == last
+
+
+def test_enlarged_page_has_sharp_edges(core: Core, tmp_path: pathlib.Path) -> None:
+    red = (200, 0, 0)
+    cbz = write_cbz(tmp_path / "small.cbz", {"page1.png": make_png(100, 100, red)})
+    with core.open(cbz) as viewer:
+        frame = viewer.run()
+        bounds = frame.page_bounds()
+        assert bounds is not None
+        assert (bounds.width, bounds.height) == (HEIGHT, HEIGHT)
+        assert frame.pixel(bounds.left, HEIGHT // 2) == red
+        assert frame.pixel(bounds.right - 1, HEIGHT // 2) == red
+        assert frame.pixel(WIDTH // 2, bounds.top) == red
+        assert frame.pixel(WIDTH // 2, bounds.bottom - 1) == red
