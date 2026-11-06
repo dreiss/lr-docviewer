@@ -50,11 +50,14 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
       - name: Install dependencies
+        # Ubuntu's clang-tidy is older and reports false positives,
+        # so pin the version that the sources are checked with.
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            cmake pkg-config just clang-tidy \
+            cmake pkg-config just \
             libpoppler-glib-dev libcairo2-dev libzip-dev libjpeg-dev libpng-dev
+          pip install clang-tidy==22.1.8
       - if: matrix.recipe != 'release'
         run: just venv
       - run: just ${{ matrix.recipe }}
