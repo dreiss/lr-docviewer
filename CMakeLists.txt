@@ -77,6 +77,18 @@ target_link_libraries(
     m
 )
 
+include(GNUInstallDirs)
+set(DOCVIEWER_INSTALL_COREDIR
+    "${CMAKE_INSTALL_LIBDIR}/libretro"
+    CACHE STRING "Core install directory, absolute or relative to the install prefix"
+)
+set(DOCVIEWER_INSTALL_INFODIR
+    "${CMAKE_INSTALL_DATADIR}/libretro/info"
+    CACHE STRING "Core info install directory, absolute or relative to the install prefix"
+)
+install(TARGETS docviewer_libretro LIBRARY DESTINATION "${DOCVIEWER_INSTALL_COREDIR}")
+install(FILES docviewer_libretro.info DESTINATION "${DOCVIEWER_INSTALL_INFODIR}")
+
 option(DOCVIEWER_BUILD_TESTS "Build test support libraries" ON)
 if(DOCVIEWER_BUILD_TESTS)
   add_subdirectory(tests)

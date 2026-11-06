@@ -30,6 +30,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
+`cmake --install build` installs the core into `<libdir>/libretro`
+and its info file into `<datadir>/libretro/info`,
+under the install prefix (`/usr/local` by default).
+Set `DOCVIEWER_INSTALL_COREDIR` and `DOCVIEWER_INSTALL_INFODIR`
+to match your RetroArch's core and core info directories.
+
 Development additionally uses `just`, clang-format, and clang-tidy.
 Its builds treat warnings as errors.
 
