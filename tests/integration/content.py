@@ -72,12 +72,20 @@ class PdfPage:
 
     The page is filled with a solid color, or with a grid if grid is set.
     Grid colors use the page's index in the document; see grid_color().
+
+    width and height are the page's size as displayed.
+    A rotation of 90 or 270 degrees swaps them for the unrotated page,
+    and the grid's rows and columns follow the unrotated page.
+    crop, if set, is the crop box as (left, bottom, right, top)
+    in unrotated page coordinates.
     """
 
     width: float
     height: float
     rgb: tuple[int, int, int] = (128, 128, 128)
     grid: bool = False
+    rotation: int = 0
+    crop: tuple[float, float, float, float] | None = None
 
 
 def write_pdf(path: pathlib.Path, pages: collections.abc.Sequence[PdfPage]) -> pathlib.Path:
@@ -92,16 +100,23 @@ def write_pdf(path: pathlib.Path, pages: collections.abc.Sequence[PdfPage]) -> p
         document.rect(x, y, width, height, stroke=0, fill=1)
 
     for index, page in enumerate(pages):
+        # ReportLab takes the displayed size and draws in unrotated coordinates.
         document.setPageSize((page.width, page.height))
+        document.setPageRotation(page.rotation)
+        # ReportLab keeps a crop box for later pages unless it's reset.
+        document.setCropBox(page.crop)
+        width, height = page.width, page.height
+        if page.rotation % 180:
+            width, height = height, width
         if not page.grid:
-            fill(page.rgb, 0, 0, page.width, page.height)
+            fill(page.rgb, 0, 0, width, height)
         else:
-            cell_width = page.width / GRID_CELLS
-            cell_height = page.height / GRID_CELLS
+            cell_width = width / GRID_CELLS
+            cell_height = height / GRID_CELLS
             for column in range(GRID_CELLS):
                 for row in range(GRID_CELLS):
                     # PDF coordinates start at the bottom left; grid rows start at the top.
-                    y = page.height - (row + 1) * cell_height
+                    y = height - (row + 1) * cell_height
                     fill(
                         grid_color(index, column, row),
                         column * cell_width,
