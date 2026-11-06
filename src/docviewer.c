@@ -14,6 +14,9 @@
 #define MAX_ZOOM 8
 #define PAN_PIXELS_PER_FRAME 24
 #define BACKGROUND_GREY (1.0 / 8)
+// Size of a placeholder for an unloadable first page, in points: US Letter.
+#define PLACEHOLDER_WIDTH 612
+#define PLACEHOLDER_HEIGHT 792
 
 // === State object
 
@@ -34,6 +37,8 @@ struct docviewer_state {
   int page_index;
   double page_width;
   double page_height;
+  // Whether the current page couldn't be loaded and is shown as a placeholder.
+  bool page_failed;
 
   double zoom_factor;
   // Offset from the page center to the viewport center, in document units.
@@ -196,26 +201,39 @@ static const struct document_vtable* find_backend(const char* path) {
 
 // === Page selection
 
-/// Returns true if the requested page was loaded and selected.
-static bool select_page(int page_number) {
-  double width;
-  double height;
-  if (!state.backend->load_page(state.document, page_number, &width, &height)) {
+/// Returns true if the requested page was loaded with valid dimensions.
+static bool load_page(int page_number, double* width, double* height) {
+  if (!state.backend->load_page(state.document, page_number, width, height)) {
     LOG(RETRO_LOG_ERROR,
-        "Document Viewer: Could not load %s page at index %d\n",
+        "Document Viewer: Could not load %s page at index %d; showing a placeholder\n",
         state.backend->name,
         page_number);
     return false;
   }
-  if (!isfinite(width) || !isfinite(height) || width < .01 || height < .01 || width > 1e8 ||
-      height > 1e8) {
+  if (!isfinite(*width) || !isfinite(*height) || *width < .01 || *height < .01 || *width > 1e8 ||
+      *height > 1e8) {
     LOG(RETRO_LOG_ERROR,
-        "Document Viewer: %s page at index %d has invalid dimensions %.17g x %.17g\n",
+        "Document Viewer: %s page at index %d has invalid dimensions %.17g x %.17g; "
+        "showing a placeholder\n",
         state.backend->name,
         page_number,
-        width,
-        height);
+        *width,
+        *height);
     return false;
+  }
+  return true;
+}
+
+/// Selects a page at fit-page zoom, or a placeholder if it can't be loaded.
+static void select_page(int page_number) {
+  double width;
+  double height;
+  state.page_failed = !load_page(page_number, &width, &height);
+  if (state.page_failed) {
+    // Keep the previous page's size, so the view doesn't jump.
+    bool have_previous = state.page_width > 0 && state.page_height > 0;
+    width = have_previous ? state.page_width : PLACEHOLDER_WIDTH;
+    height = have_previous ? state.page_height : PLACEHOLDER_HEIGHT;
   }
   state.page_index = page_number;
   state.page_width = width;
@@ -226,10 +244,9 @@ static bool select_page(int page_number) {
     cairo_surface_destroy(state.cached_preview);
     state.cached_preview = NULL;
   }
-  if (state.backend->prefer_cached_preview) {
+  if (!state.page_failed && state.backend->prefer_cached_preview) {
     create_cached_preview();
   }
-  return true;
 }
 
 /// Returns true if a different page was selected.
@@ -240,7 +257,8 @@ static bool turn_page(int delta) {
   if (state.page_index == state.page_count - 1 && delta > 0) {
     return false;
   }
-  return select_page(state.page_index + delta);
+  select_page(state.page_index + delta);
+  return true;
 }
 
 enum render_mode {
@@ -323,12 +341,15 @@ static void render_frame(enum render_mode mode) {
   );
   cairo_scale(cr, scale, scale);
 
-  // Fill in white background as backing for transparent pixels.
-  cairo_set_source_rgb(cr, 1, 1, 1);
+  // Fill in white background as backing for transparent pixels,
+  // or black for a page that couldn't be loaded.
+  double backing = state.page_failed ? 0 : 1;
+  cairo_set_source_rgb(cr, backing, backing, backing);
   cairo_rectangle(cr, 0, 0, state.page_width, state.page_height);
   cairo_fill(cr);
 
   bool rendered = true;
+  // Placeholders have no cached preview.
   bool use_cached_preview = mode == RENDER_INTERACTIVE && state.cached_preview;
   if (use_cached_preview) {
     // While panning/zooming, just render the cached preview
@@ -341,7 +362,7 @@ static void render_frame(enum render_mode mode) {
     cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
     cairo_paint(cr);
     cairo_restore(cr);
-  } else {
+  } else if (!state.page_failed) {
     rendered = state.backend->render(state.document, cr);
   }
   cairo_status_t context_status = cairo_status(cr);
@@ -499,18 +520,16 @@ bool retro_load_game(const struct retro_game_info* game) {
   }
 
   state.previous_buttons = 0;
-  if (!select_page(0)) {
-    retro_unload_game();
-    return false;
-  }
+  state.page_width = 0;
+  state.page_height = 0;
+  select_page(0);
   render_frame(RENDER_INTERACTIVE);
   return true;
 }
 
 void retro_reset(void) {
   if (state.document) {
-    if (select_page(0)) {
-      render_frame(RENDER_INTERACTIVE);
-    }
+    select_page(0);
+    render_frame(RENDER_INTERACTIVE);
   }
 }

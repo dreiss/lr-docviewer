@@ -8,7 +8,7 @@ import pytest
 from libretro.api.log import LogLevel
 
 from content import make_jpeg, make_png, write_cbz
-from harness import HEIGHT, WIDTH, Core
+from harness import HEIGHT, WIDTH, Core, Frame
 
 # Pages larger than the screen are scaled down, which keeps their colors and edges exact.
 
@@ -79,3 +79,49 @@ def test_oversized_page_is_black_placeholder(
         assert frame.pixel(WIDTH // 2, HEIGHT // 2) == (0, 0, 0)
         warnings = viewer.log.messages(LogLevel.WARNING)
         assert any("exceeds the 16777216-pixel limit" in m for m in warnings), warnings
+
+
+BLACK = (0, 0, 0)
+
+
+def page_size(frame: Frame) -> tuple[int, int]:
+    bounds = frame.page_bounds()
+    assert bounds is not None
+    return bounds.width, bounds.height
+
+
+def test_unreadable_page_is_placeholder(core: Core, tmp_path: pathlib.Path) -> None:
+    cbz = write_cbz(
+        tmp_path / "corrupt.cbz",
+        {
+            "page1.png": make_png(1500, 1500),
+            "page2.png": b"not a PNG",
+            "page3.png": make_png(3000, 1000),
+        },
+    )
+    with core.open(cbz) as viewer:
+        viewer.run()
+        # The placeholder keeps the previous page's size.
+        placeholder = viewer.tap("r")
+        assert page_size(placeholder) == (HEIGHT, HEIGHT)
+        assert placeholder.pixel(WIDTH // 2, HEIGHT // 2) == BLACK
+        errors = viewer.log.messages(LogLevel.ERROR)
+        assert any("showing a placeholder" in m for m in errors), errors
+
+        assert page_size(viewer.tap("r")) == (WIDTH, WIDTH // 3)
+        assert viewer.tap("l").pixel(WIDTH // 2, HEIGHT // 2) == BLACK
+
+
+def test_unreadable_first_page_is_placeholder(core: Core, tmp_path: pathlib.Path) -> None:
+    cbz = write_cbz(
+        tmp_path / "corrupt.cbz",
+        {"page1.png": b"not a PNG", "page2.png": make_png(3000, 1000)},
+    )
+    with core.open(cbz) as viewer:
+        placeholder = viewer.run()
+        # US Letter proportions, with a partly covered pixel at each side.
+        width, height = page_size(placeholder)
+        assert height == HEIGHT
+        assert abs(width - HEIGHT * 612 / 792) <= 2
+        assert placeholder.pixel(WIDTH // 2, HEIGHT // 2) == BLACK
+        assert page_size(viewer.tap("r")) == (WIDTH, WIDTH // 3)
