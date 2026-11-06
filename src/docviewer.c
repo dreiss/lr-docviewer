@@ -407,6 +407,9 @@ static void render_frame(enum render_mode mode) {
     cairo_scale(cr, state.zoom_factor, state.zoom_factor);
     cairo_set_source_surface(cr, state.cached_preview, 0, 0);
     cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+    // Repeat edge pixels instead of filtering in transparency,
+    // so the source is opaque and pixman can use its fast path.
+    cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
     cairo_paint(cr);
     cairo_restore(cr);
   } else if (!state.page_failed) {
