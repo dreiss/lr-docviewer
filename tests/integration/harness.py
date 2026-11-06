@@ -217,6 +217,9 @@ class FrameRecorder(ArrayVideoDriver):
     """Keeps the latest frame and records whether each refresh sent new pixels.
 
     Only the latest frame is kept because each one is about 8 MB.
+    This keeps its own copy of each frame,
+    so it skips ArrayVideoDriver's frame buffer, and with it screenshot().
+    That buffer is filled one byte at a time, which takes 0.4 seconds at 1080p.
     """
 
     def __init__(self) -> None:
@@ -224,6 +227,15 @@ class FrameRecorder(ArrayVideoDriver):
         self.frame: Frame | None = None
         # True for new pixels, False for a request to repeat the previous frame.
         self.refreshes: list[bool] = []
+
+    @property
+    @override
+    def needs_reinit(self) -> bool:
+        return False
+
+    @override
+    def reinit(self) -> None:
+        pass
 
     @override
     def refresh(
@@ -234,7 +246,8 @@ class FrameRecorder(ArrayVideoDriver):
             self.refreshes.append(True)
         elif data is FrameBufferSpecial.DUPE:
             self.refreshes.append(False)
-        super().refresh(data, width, height, pitch)
+        else:
+            raise TypeError(f"unexpected frame data: {data!r}")
 
 
 class Pad:
