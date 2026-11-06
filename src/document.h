@@ -24,10 +24,13 @@ struct document_vtable {
   void (*close)(void* document);
   /// Returns the number of pages in an open document.
   int (*page_count)(void* document);
-  /// Returns true if the page and its dimensions were loaded.
-  bool (*load_page)(void* document, int page, double* width, double* height);
-  /// Returns true if the current page was rendered without an error.
-  bool (*render)(void* document, cairo_t* cr);
+  /// Loads a page and its dimensions, and returns an opaque page, or NULL on failure.
+  /// Several pages can be loaded at once.  Close each page before its document.
+  void* (*load_page)(void* document, int page, double* width, double* height);
+  /// Releases a loaded page.
+  void (*close_page)(void* page);
+  /// Returns true if a loaded page was rendered without an error.
+  bool (*render)(void* page, cairo_t* cr);
 };
 
 extern const struct document_vtable cbz_document_vtable;

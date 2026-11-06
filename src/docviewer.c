@@ -55,6 +55,8 @@ struct docviewer_state {
   int page_index;
   double page_width;
   double page_height;
+  // The backend's loaded page, or NULL for a placeholder for a page that couldn't be loaded.
+  void* page;
   // Whether the current page couldn't be loaded and is shown as a placeholder.
   bool page_failed;
   // Quarter turns clockwise, from 0 to 3.  Kept across page turns.
@@ -296,9 +298,13 @@ void retro_unload_game(void) {
   if (state.framebuffer) {
     cairo_surface_destroy(state.framebuffer);
   }
+  if (state.backend && state.page) {
+    state.backend->close_page(state.page);
+  }
   if (state.backend && state.document) {
     state.backend->close(state.document);
   }
+  state.page = NULL;
   state.document = NULL;
   state.backend = NULL;
   state.framebuffer = NULL;
@@ -359,15 +365,16 @@ static const struct document_vtable* find_backend(const char* path) {
 
 // === Page selection
 
-/// Returns true if the requested page was loaded with valid dimensions.
-static bool load_page(int page_number, double* width, double* height) {
+/// Returns the requested page if it was loaded with valid dimensions, or else NULL.
+static void* load_page(int page_number, double* width, double* height) {
   double start = now_milliseconds();
-  if (!state.backend->load_page(state.document, page_number, width, height)) {
+  void* page = state.backend->load_page(state.document, page_number, width, height);
+  if (!page) {
     LOG(RETRO_LOG_ERROR,
         "Document Viewer: Could not load %s page at index %d; showing a placeholder\n",
         state.backend->name,
         page_number);
-    return false;
+    return NULL;
   }
   if (!isfinite(*width) || !isfinite(*height) || *width < .01 || *height < .01 || *width > 1e8 ||
       *height > 1e8) {
@@ -378,14 +385,15 @@ static bool load_page(int page_number, double* width, double* height) {
         page_number,
         *width,
         *height);
-    return false;
+    state.backend->close_page(page);
+    return NULL;
   }
   LOG(RETRO_LOG_DEBUG,
       "Document Viewer: Loaded %s page at index %d in %.1f ms\n",
       state.backend->name,
       page_number,
       now_milliseconds() - start);
-  return true;
+  return page;
 }
 
 /// Briefly shows the page number on screen.
@@ -442,7 +450,12 @@ static void show_help_hint(void) {
 static void select_page(int page_number) {
   double width;
   double height;
-  state.page_failed = !load_page(page_number, &width, &height);
+  void* page = load_page(page_number, &width, &height);
+  if (state.page) {
+    state.backend->close_page(state.page);
+  }
+  state.page = page;
+  state.page_failed = !page;
   if (state.page_failed) {
     // Keep the previous page's size, so the view doesn't jump.
     bool have_previous = state.page_width > 0 && state.page_height > 0;
@@ -536,7 +549,7 @@ static bool create_cached_preview(void) {
   double preview_scale = fit_scale();
   cairo_scale(cr, preview_scale, preview_scale);
   rotate_page(cr);
-  bool rendered = state.backend->render(state.document, cr);
+  bool rendered = state.backend->render(state.page, cr);
   cairo_status_t context_status = cairo_status(cr);
   cairo_destroy(cr);
   cairo_surface_flush(preview);
@@ -683,7 +696,7 @@ static double render_frame(enum render_mode mode) {
     cairo_paint(cr);
     cairo_restore(cr);
   } else if (!state.page_failed) {
-    rendered = state.backend->render(state.document, cr);
+    rendered = state.backend->render(state.page, cr);
   }
   if (state.help_visible) {
     draw_help(cr);

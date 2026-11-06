@@ -9,6 +9,10 @@
 struct pdf_document {
   document_log_t log;
   PopplerDocument* document;
+};
+
+struct pdf_page {
+  document_log_t log;
   PopplerPage* page;
 };
 
@@ -58,9 +62,6 @@ static void* open_document(const char* filename, document_log_t log) {
 static void close_document(void* opaque_document) {
   struct pdf_document* document = opaque_document;
 
-  if (document->page) {
-    g_object_unref(document->page);
-  }
   g_object_unref(document->document);
   free(document);
 }
@@ -75,18 +76,18 @@ static int page_count(void* opaque_document) {
   return count;
 }
 
-/// Returns true if the page and its dimensions were loaded.
-static bool load_page(void* opaque_document, int page_number, double* width, double* height) {
+/// Returns the loaded page, or NULL if it couldn't be loaded.
+static void* load_page(void* opaque_document, int page_number, double* width, double* height) {
   struct pdf_document* document = opaque_document;
-  PopplerPage* page = poppler_document_get_page(document->document, page_number);
+  PopplerPage* poppler_page = poppler_document_get_page(document->document, page_number);
 
-  if (!page) {
+  if (!poppler_page) {
     document_log_message(document->log, "PDF: Could not load page at index %d", page_number);
-    return false;
+    return NULL;
   }
   double page_width;
   double page_height;
-  poppler_page_get_size(page, &page_width, &page_height);
+  poppler_page_get_size(poppler_page, &page_width, &page_height);
   if (!isfinite(page_width) || !isfinite(page_height) || page_width <= 0 || page_height <= 0) {
     document_log_message(
         document->log,
@@ -95,31 +96,38 @@ static bool load_page(void* opaque_document, int page_number, double* width, dou
         page_width,
         page_height
     );
-    g_object_unref(page);
-    return false;
+    g_object_unref(poppler_page);
+    return NULL;
   }
-  if (document->page) {
-    g_object_unref(document->page);
+  struct pdf_page* page = calloc(1, sizeof(*page));
+  if (!page) {
+    document_log_message(document->log, "PDF: Could not allocate page at index %d", page_number);
+    g_object_unref(poppler_page);
+    return NULL;
   }
-  document->page = page;
+  page->log = document->log;
+  page->page = poppler_page;
   *width = page_width;
   *height = page_height;
-  return true;
+  return page;
 }
 
-/// Returns true if the current page was rendered without a Cairo error.
-static bool render(void* opaque_document, cairo_t* cr) {
-  struct pdf_document* document = opaque_document;
+static void close_page(void* opaque_page) {
+  struct pdf_page* page = opaque_page;
 
-  if (!document->page) {
-    document_log_message(document->log, "PDF: Cannot render because no page is loaded");
-    return false;
-  }
-  poppler_page_render(document->page, cr);
+  g_object_unref(page->page);
+  free(page);
+}
+
+/// Returns true if the page was rendered without a Cairo error.
+static bool render(void* opaque_page, cairo_t* cr) {
+  struct pdf_page* page = opaque_page;
+
+  poppler_page_render(page->page, cr);
   cairo_status_t status = cairo_status(cr);
   if (status != CAIRO_STATUS_SUCCESS) {
     document_log_message(
-        document->log, "PDF: Could not render page: %s", cairo_status_to_string(status)
+        page->log, "PDF: Could not render page: %s", cairo_status_to_string(status)
     );
     return false;
   }
@@ -134,5 +142,6 @@ const struct document_vtable pdf_document_vtable = {
     .close = close_document,
     .page_count = page_count,
     .load_page = load_page,
+    .close_page = close_page,
     .render = render,
 };

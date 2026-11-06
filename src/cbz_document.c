@@ -28,11 +28,15 @@ struct cbz_document {
   zip_t* archive;
   struct cbz_page* pages;
   int page_count;
-  int cached_page;
+};
+
+/// A decoded page.
+struct cbz_loaded_page {
+  document_log_t log;
+  // NULL for an oversized page, which is drawn as a black placeholder.
   cairo_surface_t* image;
   unsigned int image_width;
   unsigned int image_height;
-  bool oversized;
 };
 
 struct png_reader {
@@ -127,9 +131,6 @@ static int compare_pages(const void* left, const void* right) {
 static void close_document(void* opaque_document) {
   struct cbz_document* document = opaque_document;
 
-  if (document->image) {
-    cairo_surface_destroy(document->image);
-  }
   free(document->pages);
   close_archive(document->archive, document->log);
   free(document);
@@ -154,7 +155,6 @@ static void* open_document(const char* path, document_log_t log) {
   }
   document->log = log;
   document->archive = archive;
-  document->cached_page = -1;
 
   zip_int64_t entry_count = zip_get_num_entries(archive, 0);
   if (entry_count < 0) {
@@ -521,77 +521,81 @@ static image_decoder_t find_decoder(const char* path) {
   return NULL;
 }
 
-/// Returns true if the page and its dimensions were loaded.
-static bool load_page(void* opaque_document, int page_number, double* width, double* height) {
+/// Returns the decoded page, or NULL if it couldn't be loaded.
+static void* load_page(void* opaque_document, int page_number, double* width, double* height) {
   struct cbz_document* document = opaque_document;
 
   if (page_number < 0 || page_number >= document->page_count) {
     document_log_message(document->log, "CBZ: Page index %d is out of range", page_number);
-    return false;
-  }
-  if (page_number == document->cached_page) {
-    *width = document->image_width;
-    *height = document->image_height;
-    return true;
+    return NULL;
   }
   const char* name = document->pages[page_number].name;
   image_decoder_t decode = find_decoder(name);
   if (!decode) {
     document_log_message(document->log, "CBZ: Page '%s' has no image decoder", name);
-    return false;
+    return NULL;
   }
   unsigned char* data;
   size_t size;
   if (!read_page(document, page_number, &data, &size)) {
-    return false;
+    return NULL;
   }
 
-  cairo_surface_t* image = NULL;
   unsigned int image_width = 0;
   unsigned int image_height = 0;
   bool oversized = false;
-  image = decode(data, size, &image_width, &image_height, &oversized, document->log, name);
+  cairo_surface_t* image =
+      decode(data, size, &image_width, &image_height, &oversized, document->log, name);
   free(data);
   if (!image && !oversized) {
-    return false;
+    return NULL;
   }
-  if (document->image) {
-    cairo_surface_destroy(document->image);
+  struct cbz_loaded_page* page = calloc(1, sizeof(*page));
+  if (!page) {
+    document_log_message(document->log, "CBZ: Could not allocate page '%s'", name);
+    if (image) {
+      cairo_surface_destroy(image);
+    }
+    return NULL;
   }
-  document->image = image;
-  document->image_width = image_width;
-  document->image_height = image_height;
-  document->oversized = oversized;
-  document->cached_page = page_number;
+  page->log = document->log;
+  page->image = image;
+  page->image_width = image_width;
+  page->image_height = image_height;
   *width = image_width;
   *height = image_height;
-  return true;
+  return page;
 }
 
-/// Returns true if the current page was rendered without a Cairo error.
-static bool render(void* opaque_document, cairo_t* cr) {
-  struct cbz_document* document = opaque_document;
+static void close_page(void* opaque_page) {
+  struct cbz_loaded_page* page = opaque_page;
 
-  if (document->cached_page < 0) {
-    document_log_message(document->log, "CBZ: Cannot render because no page is loaded");
-    return false;
+  if (page->image) {
+    cairo_surface_destroy(page->image);
   }
-  if (document->oversized) {
+  free(page);
+}
+
+/// Returns true if the page was rendered without a Cairo error.
+static bool render(void* opaque_page, cairo_t* cr) {
+  struct cbz_loaded_page* page = opaque_page;
+
+  if (!page->image) {
     cairo_set_source_rgb(cr, 0, 0, 0);
-    cairo_rectangle(cr, 0, 0, document->image_width, document->image_height);
+    cairo_rectangle(cr, 0, 0, page->image_width, page->image_height);
     cairo_fill(cr);
   } else {
     // Filter enlarged images with repeated edge pixels, and draw only the image's area,
     // so the image neither fades at its edges nor bleeds past them.
-    cairo_set_source_surface(cr, document->image, 0, 0);
+    cairo_set_source_surface(cr, page->image, 0, 0);
     cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
-    cairo_rectangle(cr, 0, 0, document->image_width, document->image_height);
+    cairo_rectangle(cr, 0, 0, page->image_width, page->image_height);
     cairo_fill(cr);
   }
   cairo_status_t status = cairo_status(cr);
   if (status != CAIRO_STATUS_SUCCESS) {
     document_log_message(
-        document->log, "CBZ: Could not render page: %s", cairo_status_to_string(status)
+        page->log, "CBZ: Could not render page: %s", cairo_status_to_string(status)
     );
     return false;
   }
@@ -606,5 +610,6 @@ const struct document_vtable cbz_document_vtable = {
     .close = close_document,
     .page_count = page_count,
     .load_page = load_page,
+    .close_page = close_page,
     .render = render,
 };
