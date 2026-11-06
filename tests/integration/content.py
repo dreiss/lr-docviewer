@@ -13,14 +13,19 @@ from reportlab.pdfgen import canvas
 GRID_CELLS = 12
 """The number of columns and rows in a grid page."""
 
+GRID_PAGES = 4
+"""The number of grid pages with distinct colors."""
+
 
 def grid_color(page: int, column: int, row: int) -> tuple[int, int, int]:
     """Returns the color of one cell of a grid page.
 
-    Every cell of every page up to page 2 has a distinct color,
+    Every cell of every page has a distinct color,
     and none matches the viewer's background or white.
     """
-    return 40 + 16 * column, 40 + 16 * row, 64 + 64 * page
+    if not 0 <= page < GRID_PAGES:
+        raise ValueError(f"grid pages are numbered 0 to {GRID_PAGES - 1}, not {page}")
+    return 40 + 16 * column, 40 + 16 * row, 64 + 48 * page
 
 
 def _encode(image: Image.Image, image_format: str) -> bytes:

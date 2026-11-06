@@ -6,10 +6,10 @@ import pathlib
 
 import pytest
 
-from content import PdfPage, grid_color, make_grid_png, write_cbz, write_pdf
+from content import GRID_PAGES, PdfPage, grid_color, make_grid_png, write_cbz, write_pdf
 from harness import Core, Frame, Viewer
 
-PAGES = 3
+PAGES = GRID_PAGES
 
 
 def page_number(frame: Frame) -> int:
@@ -21,7 +21,7 @@ def page_number(frame: Frame) -> int:
 
 @pytest.fixture(params=["pdf", "cbz"])
 def document(request: pytest.FixtureRequest, tmp_path: pathlib.Path) -> pathlib.Path:
-    """A three-page grid document."""
+    """A grid document with every page color."""
     if request.param == "pdf":
         return write_pdf(tmp_path / "pages.pdf", [PdfPage(600, 600, grid=True)] * PAGES)
     return write_cbz(
