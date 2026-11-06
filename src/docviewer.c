@@ -48,6 +48,10 @@ struct docviewer_state {
 
   unsigned previous_buttons;
   bool settled_render_pending;
+  // Whether the frontend accepts NULL to repeat the previous frame.
+  bool can_dupe;
+  // Whether the framebuffer has changed since it was last sent.
+  bool frame_changed;
 };
 
 static struct docviewer_state state;
@@ -384,6 +388,7 @@ static void render_frame(enum render_mode mode) {
         state.page_index);
   }
   state.settled_render_pending = use_cached_preview;
+  state.frame_changed = true;
 }
 
 // === Input handling
@@ -465,12 +470,15 @@ void retro_run(void) {
     render_frame(RENDER_SETTLED);
   }
 
+  // Repeating the previous frame avoids copying an unchanged framebuffer.
+  bool send = state.frame_changed || !state.can_dupe;
   state.video_cb(
-      cairo_image_surface_get_data(state.framebuffer),
+      send ? cairo_image_surface_get_data(state.framebuffer) : NULL,
       DOCVIEWER_WIDTH,
       DOCVIEWER_HEIGHT,
       cairo_image_surface_get_stride(state.framebuffer)
   );
+  state.frame_changed = false;
 }
 
 static void document_log(const char* message) {
@@ -494,6 +502,9 @@ bool retro_load_game(const struct retro_game_info* game) {
     LOG(RETRO_LOG_ERROR, "Document Viewer: Frontend does not support XRGB8888 video\n");
     return false;
   }
+
+  bool can_dupe = false;
+  state.can_dupe = state.environment_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &can_dupe) && can_dupe;
 
   state.backend = backend;
   state.document = backend->open(game->path, document_log);

@@ -84,11 +84,36 @@ class LogShim:
 
 
 class DocviewerSession(Session):
-    """A Session that gives the core the C log shim as its log callback."""
+    """A Session that gives the core the C log shim as its log callback.
 
-    def __init__(self, *args: Any, log_shim: LogShim, **kwargs: Any) -> None:
+    can_dupe is the answer to RETRO_ENVIRONMENT_GET_CAN_DUPE,
+    or None to report that the call is unsupported.
+    """
+
+    def __init__(
+        self, *args: Any, log_shim: LogShim, can_dupe: bool | None = True, **kwargs: Any
+    ) -> None:
         self._log_shim = log_shim
+        self._can_dupe = can_dupe
         super().__init__(*args, **kwargs)
+
+    @override
+    def video_refresh(self, data: Any, width: int, height: int, pitch: int) -> None:
+        # libretro.py 0.12.0 expects a NULL frame's value to be 0,
+        # but ctypes reports None, so it rejects frames that repeat the previous one.
+        if data.value is None:
+            self.video.refresh(FrameBufferSpecial.DUPE, width, height, pitch)
+            return
+        super().video_refresh(data, width, height, pitch)
+
+    @override
+    def _get_can_dupe(self, can_dupe: Any) -> bool:
+        if not can_dupe:
+            raise ValueError("RETRO_ENVIRONMENT_GET_CAN_DUPE doesn't accept NULL")
+        if self._can_dupe is None:
+            return False
+        can_dupe[0] = self._can_dupe
+        return True
 
     @override
     def _get_log_interface(self, interface: Any) -> bool:
@@ -272,7 +297,12 @@ class Core:
         self.log_shim = log_shim
 
     def _session(
-        self, content: str | os.PathLike[str], pad: Pad, video: FrameRecorder, log: LogDriver
+        self,
+        content: str | os.PathLike[str],
+        pad: Pad,
+        video: FrameRecorder,
+        log: LogDriver,
+        can_dupe: bool | None = True,
     ) -> DocviewerSession:
         return DocviewerSession(
             self.core_path,
@@ -281,15 +311,21 @@ class Core:
             video=video,
             log=log,
             log_shim=self.log_shim,
+            can_dupe=can_dupe,
         )
 
     @contextlib.contextmanager
-    def open(self, content: str | os.PathLike[str]) -> collections.abc.Iterator[Viewer]:
-        """Loads content, failing the test if the core rejects it."""
+    def open(
+        self, content: str | os.PathLike[str], can_dupe: bool | None = True
+    ) -> collections.abc.Iterator[Viewer]:
+        """Loads content, failing the test if the core rejects it.
+
+        can_dupe is passed to DocviewerSession.
+        """
         pad = Pad()
         video = FrameRecorder()
         log = RecordingLogDriver()
-        with self._session(content, pad, video, log) as session:
+        with self._session(content, pad, video, log, can_dupe) as session:
             yield Viewer(session, pad, video, log)
 
     def load_failure(self, content: str | os.PathLike[str]) -> RecordingLogDriver:

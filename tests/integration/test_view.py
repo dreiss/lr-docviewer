@@ -157,3 +157,5 @@ def test_cbz_zoom_is_final_immediately(core: Core, tmp_path: pathlib.Path) -> No
         viewer.run()
         zoomed_frame = viewer.run(x=True)
         assert viewer.run() == zoomed_frame
+        # The idle frame repeats the zoomed one instead of rendering again.
+        assert viewer.video.refreshes[-1] is False
