@@ -12,7 +12,8 @@
 
 #define DOCVIEWER_WIDTH 1920
 #define DOCVIEWER_HEIGHT 1080
-#define ZOOM_FACTOR 1.25
+// Holding a zoom button doubles or halves the zoom every second.
+#define ZOOM_PER_SECOND 2
 #define MAX_ZOOM 8
 #define PAN_PIXELS_PER_FRAME 24
 #define BACKGROUND_GREY (1.0 / 8)
@@ -44,6 +45,9 @@ struct docviewer_state {
   // Whether the current page couldn't be loaded and is shown as a placeholder.
   bool page_failed;
 
+  // Frames that zoom in has been held, net of zoom out; 0 is fit-page zoom.
+  // Counting frames keeps zooming in and back out exact.
+  int zoom_frames;
   double zoom_factor;
   // Offset from the page center to the viewport center, in document units.
   // (0, 0) centers the page.
@@ -100,8 +104,8 @@ static double fit_scale(void) {
 static const struct retro_input_descriptor bindings[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Previous page"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Next page"},
-    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Zoom in"},
-    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Zoom out"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Zoom in"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Zoom out"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Pan up"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Pan down"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Pan left"},
@@ -301,6 +305,7 @@ static void select_page(int page_number) {
   state.page_index = page_number;
   state.page_width = width;
   state.page_height = height;
+  state.zoom_frames = 0;
   state.zoom_factor = 1;
   state.pan_x = 0;
   state.pan_y = 0;
@@ -530,16 +535,12 @@ static struct input_result process_input(void) {
     view_changed |= turn_page(1);
   }
 
-  double zoom = state.zoom_factor;
-  if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_X)) {
-    zoom *= ZOOM_FACTOR;
-  }
-  if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_Y)) {
-    zoom /= ZOOM_FACTOR;
-  }
-  zoom = clamp(zoom, 1, MAX_ZOOM);
-  if (zoom != state.zoom_factor) {
-    state.zoom_factor = zoom;
+  int zoom_frames = state.zoom_frames + !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_Y)) -
+                    !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_X));
+  double calculated_zoom = pow(ZOOM_PER_SECOND, (double)zoom_frames / FRAMES_PER_SECOND);
+  if (zoom_frames != state.zoom_frames && zoom_frames >= 0 && calculated_zoom <= MAX_ZOOM) {
+    state.zoom_frames = zoom_frames;
+    state.zoom_factor = calculated_zoom;
     view_changed = true;
   }
 

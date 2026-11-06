@@ -67,7 +67,7 @@ def test_pdf_zoom_renders_final_view_once_idle(core: Core, tmp_path: pathlib.Pat
     with core.open(pdf) as viewer:
         viewer.run(3)
         before = len(viewer.video.refreshes)
-        viewer.run(x=True)
+        viewer.run(y=True)
         viewer.run(3)
         # The preview while zooming, then the full-quality view.
         assert viewer.video.refreshes[before:] == [NEW, NEW] + [REPEAT] * 2

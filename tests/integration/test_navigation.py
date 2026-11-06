@@ -10,6 +10,7 @@ from content import GRID_PAGES, PdfPage, grid_color, make_grid_png, write_cbz, w
 from harness import Core, Frame, Viewer
 
 PAGES = GRID_PAGES
+SECOND = 60
 
 
 def page_number(frame: Frame) -> int:
@@ -57,7 +58,7 @@ def test_next_page_stops_at_last_page(viewer: Viewer) -> None:
 def test_page_turn_resets_zoom(viewer: Viewer) -> None:
     second = viewer.tap("r")
     viewer.tap("l")
-    viewer.tap("x", times=3)
+    viewer.run(SECOND, y=True)
     viewer.run(10, right=True)
     viewer.run()
     assert viewer.tap("r") == second
@@ -66,7 +67,7 @@ def test_page_turn_resets_zoom(viewer: Viewer) -> None:
 def test_reset_returns_to_first_page_at_fit(viewer: Viewer) -> None:
     first = viewer.run()
     viewer.tap("r", times=2)
-    viewer.tap("x", times=3)
+    viewer.run(SECOND, y=True)
     viewer.reset()
     assert viewer.run() == first
 

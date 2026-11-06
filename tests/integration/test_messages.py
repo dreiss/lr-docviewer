@@ -51,9 +51,9 @@ def test_page_number_is_a_brief_on_screen_status(core: Core, document: pathlib.P
 def test_no_page_number_without_a_page_change(core: Core, document: pathlib.Path) -> None:
     with core.open(document) as viewer:
         viewer.tap("l")
-        viewer.tap("x")
-        viewer.run(5, right=True)
         viewer.tap("y")
+        viewer.run(5, right=True)
+        viewer.tap("x")
         viewer.tap("r", times=PAGES - 1)
         viewer.tap("r")
         assert texts(viewer) == ["Page 1 of 3", "Page 2 of 3", "Page 3 of 3"]

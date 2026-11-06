@@ -24,10 +24,12 @@ Controls, in RetroArch's SNES-style button names
 | Control | Action |
 |---|---|
 | L / R | Previous / next page |
-| X / Y | Zoom in / out |
+| Y / X | Zoom in / out |
 | D-pad | Pan the enlarged page |
 
-Page and zoom buttons act once per press; panning is continuous.
+Page buttons act once per press.
+Holding a zoom button doubles or halves the zoom every second,
+and panning is continuous.
 RetroArch's Reset returns to the first page at fit-page zoom.
 Close the viewer with your normal RetroArch exit hotkey.
 

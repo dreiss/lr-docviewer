@@ -18,7 +18,8 @@ from content import GRID_CELLS, PdfPage, grid_color, make_grid_png, write_cbz, w
 from harness import HEIGHT, WIDTH, Bounds, Core, Frame, Viewer
 
 CELL = HEIGHT // GRID_CELLS
-ZOOM_STEP = 1.25
+# Holding zoom in for a second doubles the zoom, up to 8 times fit.
+SECOND = 60
 MAX_ZOOM = 8
 PAN_PIXELS_PER_FRAME = 24
 
@@ -66,42 +67,63 @@ def test_fit_places_grid(grid_viewer: Viewer) -> None:
 
 
 def test_zoom_in_scales_about_screen_center(grid_viewer: Viewer) -> None:
-    frame = grid_viewer.tap("x")
-    size = CELL * ZOOM_STEP
+    grid_viewer.run(SECOND, y=True)
+    frame = grid_viewer.run()
+    size = CELL * 2
     # The corner of cells (5, 5) and (6, 6) stays at the screen center.
     assert_near(center(frame, 6, 6), (WIDTH / 2 + size / 2, HEIGHT / 2 + size / 2), 1)
     assert_near(center(frame, 5, 5), (WIDTH / 2 - size / 2, HEIGHT / 2 - size / 2), 1)
     assert_near((spacing(frame, 6, 6),), (size,), 1)
 
 
+def test_zoom_is_continuous(grid_viewer: Viewer) -> None:
+    grid_viewer.run()
+    sizes = [spacing(grid_viewer.run(y=True), 6, 6) for _ in range(SECOND // 2)]
+    # Every frame zooms in a little more.
+    assert all(a < b for a, b in zip([CELL, *sizes], sizes, strict=False)), sizes
+    # Half a second zooms by the square root of 2.
+    assert_near((sizes[-1],), (CELL * 2**0.5,), 1)
+
+
 def test_zoom_out_restores_fit(grid_viewer: Viewer) -> None:
     fit = grid_viewer.run()
-    grid_viewer.tap("x", times=3)
-    assert grid_viewer.tap("y", times=3) == fit
+    grid_viewer.run(SECOND, y=True)
+    grid_viewer.run(SECOND, x=True)
+    assert grid_viewer.run() == fit
 
 
 def test_zoom_out_stops_at_fit(grid_viewer: Viewer) -> None:
     fit = grid_viewer.run()
-    assert grid_viewer.tap("y") == fit
+    grid_viewer.run(SECOND // 2, y=True)
+    grid_viewer.run(SECOND, x=True)
+    assert grid_viewer.run() == fit
 
 
 def test_zoom_in_stops_at_maximum(grid_viewer: Viewer) -> None:
-    # 1.25 ** 10 exceeds the maximum zoom.
-    maximum = grid_viewer.tap("x", times=10)
+    grid_viewer.run(4 * SECOND, y=True)
+    maximum = grid_viewer.run()
     size = CELL * MAX_ZOOM
     # Cell (6, 6) is cut off at the bottom of the screen, so check only its left half.
     assert_near((cell(maximum, 6, 6).left,), (WIDTH / 2,), size / 100)
     assert_near((center(maximum, 5, 5)[0],), (WIDTH / 2 - size / 2,), 1)
-    assert grid_viewer.tap("x") == maximum
+    grid_viewer.run(5, y=True)
+    assert grid_viewer.run() == maximum
 
 
-ZOOMED_TAPS = 6
-ZOOMED_CELL = CELL * ZOOM_STEP**ZOOMED_TAPS
+def test_holding_both_zoom_buttons_keeps_zoom(grid_viewer: Viewer) -> None:
+    grid_viewer.run(SECOND // 2, y=True)
+    zoomed_frame = grid_viewer.run()
+    grid_viewer.run(5, x=True, y=True)
+    assert grid_viewer.run() == zoomed_frame
+
+
+ZOOMED_CELL = CELL * 4
 
 
 def zoomed(viewer: Viewer) -> Frame:
     """Zooms in far enough to leave room to pan in every direction."""
-    return viewer.tap("x", times=ZOOMED_TAPS)
+    viewer.run(2 * SECOND, y=True)
+    return viewer.run()
 
 
 def test_pan_moves_by_fixed_screen_distance(grid_viewer: Viewer) -> None:
@@ -143,10 +165,10 @@ def test_pdf_preview_matches_final_render(core: Core, tmp_path: pathlib.Path) ->
     pdf = write_pdf(tmp_path / "grid.pdf", [PdfPage(600, 600, grid=True)])
     with core.open(pdf) as viewer:
         viewer.run()
-        preview = viewer.run(x=True)
+        preview = viewer.run(SECOND // 3, y=True)
         final = viewer.run()
         assert final != preview
-        # Cells that are entirely on screen at 1.25 times fit.
+        # Cells that are entirely on screen at 1.26 times fit.
         for column, row in [(2, 2), (5, 5), (6, 6), (9, 9)]:
             assert_near(center(preview, column, row), center(final, column, row), 1)
 
@@ -155,7 +177,7 @@ def test_cbz_zoom_is_final_immediately(core: Core, tmp_path: pathlib.Path) -> No
     cbz = write_cbz(tmp_path / "grid.cbz", {"page.png": make_grid_png(1200, 1200)})
     with core.open(cbz) as viewer:
         viewer.run()
-        zoomed_frame = viewer.run(x=True)
+        zoomed_frame = viewer.run(y=True)
         assert viewer.run() == zoomed_frame
         # The idle frame repeats the zoomed one instead of rendering again.
         assert viewer.video.refreshes[-1] is False

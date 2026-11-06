@@ -71,17 +71,18 @@ def test_gestures_are_summarized_when_released(core: Core, pdf: pathlib.Path) ->
     with core.open(pdf) as viewer:
         timings = Timings(viewer)
         timings.new()
-        viewer.tap("x")
+        viewer.tap("y")
         assert timings.new() == [
             "Drew 1 frame while zooming or panning in T ms on average and T ms at most",
-            "Drew PDF page at index 0 at 1.25x zoom in T ms",
+            "Drew PDF page at index 0 at 1.01x zoom in T ms",
         ]
+        viewer.run(59, y=True)
         viewer.run(5, down=True)
         assert timings.new() == []
         viewer.run()
         assert timings.new() == [
-            "Drew 5 frames while zooming or panning in T ms on average and T ms at most",
-            "Drew PDF page at index 0 at 1.25x zoom in T ms",
+            "Drew 64 frames while zooming or panning in T ms on average and T ms at most",
+            "Drew PDF page at index 0 at 2.00x zoom in T ms",
         ]
         viewer.run(5)
         assert timings.new() == []
