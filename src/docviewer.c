@@ -243,7 +243,8 @@ static void select_page(int page_number) {
   state.page_width = width;
   state.page_height = height;
   state.zoom_factor = 1;
-  state.pan_x = state.pan_y = 0;
+  state.pan_x = 0;
+  state.pan_y = 0;
   if (state.cached_preview) {
     cairo_surface_destroy(state.cached_preview);
     state.cached_preview = NULL;
