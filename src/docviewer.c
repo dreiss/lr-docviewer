@@ -16,6 +16,8 @@
 #define ZOOM_PER_SECOND 2
 #define MAX_ZOOM 8
 #define PAN_PIXELS_PER_FRAME 24
+// L2 and R2 move back or forward this many pages.
+#define PAGE_JUMP 10
 #define BACKGROUND_GREY (1.0 / 8)
 // Size of a placeholder for an unloadable first page, in points: US Letter.
 #define PLACEHOLDER_WIDTH 612
@@ -104,6 +106,8 @@ static double fit_scale(void) {
 static const struct retro_input_descriptor bindings[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L, "Previous page"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R, "Next page"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2, "Back 10 pages"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2, "Forward 10 pages"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y, "Zoom in"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X, "Zoom out"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP, "Pan up"},
@@ -319,15 +323,20 @@ static void select_page(int page_number) {
   show_page_message();
 }
 
+/// Turns forward or back by some pages, stopping at the first and last pages.
 /// Returns true if a different page was selected.
 static bool turn_page(int delta) {
-  if (state.page_index == 0 && delta < 0) {
+  int page = state.page_index + delta;
+  if (page < 0) {
+    page = 0;
+  }
+  if (page > state.page_count - 1) {
+    page = state.page_count - 1;
+  }
+  if (page == state.page_index) {
     return false;
   }
-  if (state.page_index == state.page_count - 1 && delta > 0) {
-    return false;
-  }
-  select_page(state.page_index + delta);
+  select_page(page);
   return true;
 }
 
@@ -533,6 +542,12 @@ static struct input_result process_input(void) {
   }
   if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_R)) {
     view_changed |= turn_page(1);
+  }
+  if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_L2)) {
+    view_changed |= turn_page(-PAGE_JUMP);
+  }
+  if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_R2)) {
+    view_changed |= turn_page(PAGE_JUMP);
   }
 
   int zoom_frames = state.zoom_frames + !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_Y)) -

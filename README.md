@@ -24,6 +24,7 @@ Controls, in RetroArch's SNES-style button names
 | Control | Action |
 |---|---|
 | L / R | Previous / next page |
+| L2 / R2 | Back / forward 10 pages |
 | Y / X | Zoom in / out |
 | D-pad | Pan the enlarged page |
 

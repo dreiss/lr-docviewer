@@ -83,3 +83,24 @@ def test_reloading_shows_the_same_frames(core: Core, tmp_path: pathlib.Path) -> 
     first = frames(pdf)
     assert frames(cbz)
     assert frames(pdf) == first
+
+
+def test_l2_and_r2_jump_ten_pages(core: Core, tmp_path: pathlib.Path) -> None:
+    pdf = write_pdf(tmp_path / "long.pdf", [PdfPage(600, 600)] * 25)
+    with core.open(pdf) as viewer:
+        viewer.tap("r2", times=3)
+        viewer.tap("l2")
+        viewer.tap("r")
+        viewer.tap("l2", times=3)
+        assert viewer.messages is not None
+        assert viewer.messages.texts() == [
+            "Page 1 of 25",
+            "Page 11 of 25",
+            "Page 21 of 25",
+            # Jumps stop at the last and first pages.
+            "Page 25 of 25",
+            "Page 15 of 25",
+            "Page 16 of 25",
+            "Page 6 of 25",
+            "Page 1 of 25",
+        ]
