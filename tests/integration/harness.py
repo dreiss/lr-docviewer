@@ -171,6 +171,22 @@ class Frame:
         left, top, right, bottom = box
         return Bounds(left=left, top=top, right=right, bottom=bottom)
 
+    def locate(self, rgb: tuple[int, int, int], tolerance: int = 0) -> Bounds | None:
+        """Returns the bounding box of the pixels within tolerance of a color, if any.
+
+        Antialiased and filtered edges blend with their neighbors,
+        so a colored region's box may exclude a pixel or two at its edges.
+        """
+        image = self.image()
+        difference = ImageChops.difference(image, Image.new("RGB", image.size, rgb))
+        red, green, blue = difference.split()
+        largest = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+        box = largest.point(lambda channel: 255 if channel <= tolerance else 0).getbbox()
+        if box is None:
+            return None
+        left, top, right, bottom = box
+        return Bounds(left=left, top=top, right=right, bottom=bottom)
+
 
 class FrameRecorder(ArrayVideoDriver):
     """Keeps the latest frame and records whether each refresh sent new pixels.
@@ -234,9 +250,17 @@ class Viewer:
         assert self.video.frame is not None, "the core has not sent a frame"
         return self.video.frame
 
-    def tap(self, button: str) -> Frame:
-        """Presses a button for one frame, releases it for one frame, and returns the result."""
-        self.run(**{button: True})
+    def tap(self, button: str, times: int = 1) -> Frame:
+        """Presses and releases a button, one frame each, and returns the last frame shown."""
+        assert times >= 1
+        for _ in range(times):
+            self.run(**{button: True})
+            frame = self.run()
+        return frame
+
+    def reset(self) -> Frame:
+        """Resets the core, runs one frame, and returns it."""
+        self.session.reset()
         return self.run()
 
 
