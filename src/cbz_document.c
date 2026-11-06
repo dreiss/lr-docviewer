@@ -94,6 +94,29 @@ static bool is_image(const char* path) {
   return find_decoder(path) != NULL;
 }
 
+/// Returns true if a path component is hidden, like ".DS_Store" or "._page1.png".
+/// "." is not hidden, so names like "./page1.png" are accepted.
+static bool is_hidden(const char* component) {
+  return component[0] == '.' && component[1] != '/' && component[1] != '\0';
+}
+
+/// Returns true if an archive entry is a page image.
+/// Hidden files and directories, and macOS "__MACOSX/" metadata, are not pages.
+static bool is_page_entry(const char* name) {
+  const char* component = name;
+  while (true) {
+    if (is_hidden(component) || strncmp(component, "__MACOSX/", strlen("__MACOSX/")) == 0) {
+      return false;
+    }
+    const char* slash = strchr(component, '/');
+    if (!slash) {
+      break;
+    }
+    component = slash + 1;
+  }
+  return is_image(name);
+}
+
 static int compare_pages(const void* left, const void* right) {
   const struct cbz_page* a = left;
   const struct cbz_page* b = right;
@@ -152,7 +175,7 @@ static void* open_document(const char* path, document_log_t log) {
       );
       continue;
     }
-    if (!is_image(name)) {
+    if (!is_page_entry(name)) {
       continue;
     }
     if (document->page_count == INT_MAX) {

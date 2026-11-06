@@ -125,3 +125,27 @@ def test_unreadable_first_page_is_placeholder(core: Core, tmp_path: pathlib.Path
         assert abs(width - HEIGHT * 612 / 792) <= 2
         assert placeholder.pixel(WIDTH // 2, HEIGHT // 2) == BLACK
         assert page_size(viewer.tap("r")) == (WIDTH, WIDTH // 3)
+
+
+def test_hidden_and_macos_entries_are_not_pages(core: Core, tmp_path: pathlib.Path) -> None:
+    red = (200, 0, 0)
+    blue = (0, 0, 200)
+    # Valid images in other colors, so they would show up as pages if they weren't skipped.
+    cbz = write_cbz(
+        tmp_path / "macos.cbz",
+        {
+            "__MACOSX/._page1.png": make_png(2000, 1000, (0, 200, 0)),
+            "chapter/.thumbnails/page1.png": make_png(2000, 1000, (200, 200, 0)),
+            "./page1.png": make_png(1500, 1500, red),
+            "page2.png": make_png(3000, 1000, blue),
+            "page3/.hidden.png": make_png(2000, 1000, (0, 200, 200)),
+        },
+    )
+    with core.open(cbz) as viewer:
+        first = viewer.run()
+        assert page_size(first) == (HEIGHT, HEIGHT)
+        assert first.pixel(WIDTH // 2, HEIGHT // 2) == red
+        last = viewer.tap("r")
+        assert page_size(last) == (WIDTH, WIDTH // 3)
+        assert last.pixel(WIDTH // 2, HEIGHT // 2) == blue
+        assert viewer.tap("r") == last
