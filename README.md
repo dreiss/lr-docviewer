@@ -27,12 +27,17 @@ Controls, in RetroArch's SNES-style button names
 | L2 / R2 | Back / forward 10 pages |
 | Y / X | Zoom in / out |
 | D-pad or left stick | Pan the enlarged page |
+| A + L / R | Rotate counterclockwise / clockwise |
 
+A is an option button:
+while it's held, L and R rotate the view instead of turning pages,
+and the d-pad, X, Y, and B do nothing.
+Rotation stays the same when you turn pages.
 Page buttons act once per press.
 Holding a zoom button doubles or halves the zoom every second,
 and panning is continuous.
 The left stick pans faster the further it's pushed.
-RetroArch's Reset returns to the first page at fit-page zoom.
+RetroArch's Reset returns to the first page, upright, at fit-page zoom.
 Close the viewer with your normal RetroArch exit hotkey.
 
 Output is 1920 x 1080, which RetroArch scales to the screen,

@@ -49,6 +49,8 @@ struct docviewer_state {
   double page_height;
   // Whether the current page couldn't be loaded and is shown as a placeholder.
   bool page_failed;
+  // Quarter turns clockwise, from 0 to 3.  Kept across page turns.
+  int rotation;
 
   // Frames that zoom in has been held, net of zoom out; 0 is fit-page zoom.
   // Counting frames keeps zooming in and back out exact.
@@ -100,8 +102,39 @@ static double now_milliseconds(void) {
   return (double)time.tv_sec * 1000 + (double)time.tv_nsec / 1e6;
 }
 
+/// Returns the page's width as displayed, after rotation, in points.
+static double view_width(void) {
+  return state.rotation % 2 ? state.page_height : state.page_width;
+}
+
+/// Returns the page's height as displayed, after rotation, in points.
+static double view_height(void) {
+  return state.rotation % 2 ? state.page_width : state.page_height;
+}
+
 static double fit_scale(void) {
-  return fmin(DOCVIEWER_WIDTH / state.page_width, DOCVIEWER_HEIGHT / state.page_height);
+  return fmin(DOCVIEWER_WIDTH / view_width(), DOCVIEWER_HEIGHT / view_height());
+}
+
+/// Turns a context whose origin is the displayed page's top-left corner, in points,
+/// so that drawing in page coordinates appears rotated.
+static void rotate_page(cairo_t* cr) {
+  // Exact matrices, rather than cairo_rotate(), keep fit-page frames pixel-exact.
+  cairo_matrix_t matrix;
+  switch (state.rotation) {
+  case 1:
+    cairo_matrix_init(&matrix, 0, 1, -1, 0, view_width(), 0);
+    break;
+  case 2:
+    cairo_matrix_init(&matrix, -1, 0, 0, -1, view_width(), view_height());
+    break;
+  case 3:
+    cairo_matrix_init(&matrix, 0, -1, 1, 0, 0, view_height());
+    break;
+  default:
+    return;
+  }
+  cairo_transform(cr, &matrix);
 }
 
 // === Libretro init and deinit
@@ -117,6 +150,7 @@ static const struct retro_input_descriptor bindings[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Pan down"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Pan left"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Pan right"},
+    {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A, "Hold for options: L/R rotate"},
     {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "Pan"},
     {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "Pan"},
     {0, 0, 0, 0, NULL}
@@ -345,6 +379,28 @@ static bool turn_page(int delta) {
   return true;
 }
 
+/// Rotates the view by quarter turns, positive for clockwise,
+/// keeping the same spot on the page at the center of the screen.
+/// Takes at most a full turn counterclockwise, -4 quarter turns.
+static void rotate_view(int quarter_turns) {
+  // Adding a full turn keeps the sum nonnegative, since C's % keeps the sign.
+  state.rotation = (state.rotation + quarter_turns + 4) % 4;
+  double pan_x = state.pan_x;
+  double pan_y = state.pan_y;
+  if (quarter_turns > 0) {
+    state.pan_x = -pan_y;
+    state.pan_y = pan_x;
+  } else {
+    state.pan_x = pan_y;
+    state.pan_y = -pan_x;
+  }
+  if (state.cached_preview) {
+    cairo_surface_destroy(state.cached_preview);
+    state.cached_preview = NULL;
+    create_cached_preview();
+  }
+}
+
 enum render_mode {
   RENDER_INTERACTIVE,
   RENDER_SETTLED,
@@ -375,6 +431,7 @@ static bool create_cached_preview(void) {
   // Render at the appropriate scale.
   double preview_scale = fit_scale();
   cairo_scale(cr, preview_scale, preview_scale);
+  rotate_page(cr);
   bool rendered = state.backend->render(state.document, cr);
   cairo_status_t context_status = cairo_status(cr);
   cairo_destroy(cr);
@@ -424,14 +481,15 @@ static double render_frame(enum render_mode mode) {
   // Translate and scale draw context to receive page.
   double preview_scale = fit_scale();
   double scale = preview_scale * state.zoom_factor;
-  double scaled_page_width = state.page_width * scale;
-  double scaled_page_height = state.page_height * scale;
+  double scaled_page_width = view_width() * scale;
+  double scaled_page_height = view_height() * scale;
   // Put the page's corner on a whole pixel,
   // so at fit-page zoom the preview can be copied pixel for pixel.
   double page_x = round((DOCVIEWER_WIDTH - scaled_page_width) / 2 - state.pan_x * scale);
   double page_y = round((DOCVIEWER_HEIGHT - scaled_page_height) / 2 - state.pan_y * scale);
   cairo_translate(cr, page_x, page_y);
   cairo_scale(cr, scale, scale);
+  rotate_page(cr);
 
   // Fill in white background as backing for transparent pixels,
   // or black for a page that couldn't be loaded.
@@ -566,8 +624,30 @@ static struct input_result process_input(void) {
   unsigned just_pressed = buttons & ~state.previous_buttons;
   state.previous_buttons = buttons;
 
+  // Holding A gives these buttons other meanings.
+  const unsigned option_buttons =
+      (1u << RETRO_DEVICE_ID_JOYPAD_L) | (1u << RETRO_DEVICE_ID_JOYPAD_R) |
+      (1u << RETRO_DEVICE_ID_JOYPAD_UP) | (1u << RETRO_DEVICE_ID_JOYPAD_DOWN) |
+      (1u << RETRO_DEVICE_ID_JOYPAD_LEFT) | (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT) |
+      (1u << RETRO_DEVICE_ID_JOYPAD_X) | (1u << RETRO_DEVICE_ID_JOYPAD_Y) |
+      (1u << RETRO_DEVICE_ID_JOYPAD_B);
+  unsigned option_pressed = 0;
+  if (buttons & (1u << RETRO_DEVICE_ID_JOYPAD_A)) {
+    option_pressed = just_pressed & option_buttons;
+    buttons &= ~option_buttons;
+    just_pressed &= ~option_buttons;
+  }
+
   bool view_changed = false;
 
+  if (option_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_L)) {
+    rotate_view(-1);
+    view_changed = true;
+  }
+  if (option_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_R)) {
+    rotate_view(1);
+    view_changed = true;
+  }
   if (just_pressed & (1u << RETRO_DEVICE_ID_JOYPAD_L)) {
     view_changed |= turn_page(-1);
   }
@@ -591,8 +671,8 @@ static struct input_result process_input(void) {
   }
 
   double scale = fit_scale() * state.zoom_factor;
-  double max_pan_x = fmax(0, state.page_width - DOCVIEWER_WIDTH / scale) / 2;
-  double max_pan_y = fmax(0, state.page_height - DOCVIEWER_HEIGHT / scale) / 2;
+  double max_pan_x = fmax(0, view_width() - DOCVIEWER_WIDTH / scale) / 2;
+  double max_pan_y = fmax(0, view_height() - DOCVIEWER_HEIGHT / scale) / 2;
   double stick_x;
   double stick_y;
   read_left_stick(&stick_x, &stick_y);
@@ -723,6 +803,7 @@ bool retro_load_game(const struct retro_game_info* game) {
   state.previous_buttons = 0;
   state.page_width = 0;
   state.page_height = 0;
+  state.rotation = 0;
   select_page(0);
   log_frame(render_frame(RENDER_INTERACTIVE));
   return true;
@@ -730,6 +811,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 
 void retro_reset(void) {
   if (state.document) {
+    state.rotation = 0;
     select_page(0);
     log_frame(render_frame(RENDER_INTERACTIVE));
   }
