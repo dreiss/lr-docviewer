@@ -16,6 +16,9 @@
 #define ZOOM_PER_SECOND 2
 #define MAX_ZOOM 8
 #define PAN_PIXELS_PER_FRAME 24
+// Left stick deflection below this fraction of full is ignored,
+// so a resting stick that doesn't read exactly 0 doesn't drift.
+#define STICK_DEAD_ZONE 0.15
 // L2 and R2 move back or forward this many pages.
 #define PAGE_JUMP 10
 #define BACKGROUND_GREY (1.0 / 8)
@@ -114,6 +117,8 @@ static const struct retro_input_descriptor bindings[] = {
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN, "Pan down"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT, "Pan left"},
     {0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT, "Pan right"},
+    {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "Pan"},
+    {0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "Pan"},
     {0, 0, 0, 0, NULL}
 };
 
@@ -519,6 +524,32 @@ static void log_gesture(void) {
 
 // === Input handling
 
+/// Reads the left stick, with each axis from -1 to 1, and 0 inside the dead zone.
+static void read_left_stick(double* x, double* y) {
+  // libretro.h documents analog axes as ranging from -0x8000 to 0x7fff (32767).
+  // Full left or up is slightly past -1, but the speed below is limited to 1.
+  double raw_x =
+      state.input_state_cb(
+          0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X
+      ) /
+      32767.0;
+  double raw_y =
+      state.input_state_cb(
+          0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y
+      ) /
+      32767.0;
+  double magnitude = hypot(raw_x, raw_y);
+  if (magnitude <= STICK_DEAD_ZONE) {
+    *x = 0;
+    *y = 0;
+    return;
+  }
+  // Start from zero at the edge of the dead zone, so speed doesn't jump.
+  double speed = fmin(1, (magnitude - STICK_DEAD_ZONE) / (1 - STICK_DEAD_ZONE));
+  *x = raw_x / magnitude * speed;
+  *y = raw_y / magnitude * speed;
+}
+
 struct input_result {
   bool view_changed;
   bool view_controls_held;
@@ -562,10 +593,21 @@ static struct input_result process_input(void) {
   double scale = fit_scale() * state.zoom_factor;
   double max_pan_x = fmax(0, state.page_width - DOCVIEWER_WIDTH / scale) / 2;
   double max_pan_y = fmax(0, state.page_height - DOCVIEWER_HEIGHT / scale) / 2;
-  double dx = !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT)) -
-              !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT));
-  double dy = !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN)) -
-              !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_UP));
+  double stick_x;
+  double stick_y;
+  read_left_stick(&stick_x, &stick_y);
+  double dx = clamp(
+      !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT)) -
+          !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_LEFT)) + stick_x,
+      -1,
+      1
+  );
+  double dy = clamp(
+      !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_DOWN)) -
+          !!(buttons & (1u << RETRO_DEVICE_ID_JOYPAD_UP)) + stick_y,
+      -1,
+      1
+  );
   double pan_x = clamp(state.pan_x + dx * PAN_PIXELS_PER_FRAME / scale, -max_pan_x, max_pan_x);
   double pan_y = clamp(state.pan_y + dy * PAN_PIXELS_PER_FRAME / scale, -max_pan_y, max_pan_y);
   if (pan_x != state.pan_x) {
@@ -583,7 +625,7 @@ static struct input_result process_input(void) {
       (1u << RETRO_DEVICE_ID_JOYPAD_LEFT) | (1u << RETRO_DEVICE_ID_JOYPAD_RIGHT);
   return (struct input_result){
       .view_changed = view_changed,
-      .view_controls_held = (buttons & view_buttons) != 0,
+      .view_controls_held = (buttons & view_buttons) != 0 || stick_x != 0 || stick_y != 0,
   };
 }
 

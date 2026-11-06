@@ -11,11 +11,12 @@ import sys
 from typing import Any, Self, override
 
 from libretro import Session
-from libretro.api.input import JoypadState
+from libretro.api.input import AnalogState, JoypadState
 from libretro.api.log import LogLevel, retro_log_callback, retro_log_printf_t
 from libretro.api.message import MessageTarget, MessageType, retro_message, retro_message_ext
 from libretro.api.video import PixelFormat
 from libretro.drivers import ArrayVideoDriver, LogDriver, MessageDriver
+from libretro.drivers.input import PortState
 from libretro.drivers.video import FrameBufferSpecial
 from PIL import Image, ImageChops
 
@@ -306,12 +307,12 @@ class FrameRecorder(ArrayVideoDriver):
 
 
 class Pad:
-    """Joypad state for port 0, held until changed."""
+    """Joypad and analog stick state for port 0, held until changed."""
 
     def __init__(self) -> None:
-        self.state = JoypadState()
+        self.state = PortState(joypad=JoypadState(), analog=AnalogState())
 
-    def states(self) -> collections.abc.Iterator[JoypadState]:
+    def states(self) -> collections.abc.Iterator[PortState]:
         while True:
             yield self.state
 
@@ -337,9 +338,15 @@ class Viewer:
     def pixel_format(self) -> PixelFormat:
         return self.video.pixel_format
 
-    def run(self, frames: int = 1, **buttons: bool) -> Frame:
-        """Holds the given buttons for some frames and returns the last frame shown."""
-        self.pad.state = JoypadState(**buttons)
+    def run(self, frames: int = 1, left_stick: tuple[int, int] = (0, 0), **buttons: bool) -> Frame:
+        """Holds the given buttons and stick position for some frames.
+
+        Returns the last frame shown.
+        Stick axes range from -32768 to 32767, with positive x right and positive y down.
+        """
+        self.pad.state = PortState(
+            joypad=JoypadState(**buttons), analog=AnalogState(lstick=left_stick)
+        )
         for _ in range(frames):
             self.session.run()
         assert self.video.frame is not None, "the core has not sent a frame"

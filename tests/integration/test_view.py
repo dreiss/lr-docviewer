@@ -134,6 +134,28 @@ def test_pan_moves_by_fixed_screen_distance(grid_viewer: Viewer) -> None:
 
 
 @pytest.mark.parametrize(
+    ("stick", "pixels_per_frame"),
+    [
+        ((32767, 0), (PAN_PIXELS_PER_FRAME, 0)),
+        ((-32768, 0), (-PAN_PIXELS_PER_FRAME, 0)),
+        ((0, 32767), (0, PAN_PIXELS_PER_FRAME)),
+        # Speed grows from zero at the edge of the 15% dead zone.
+        ((0, -32767 * 0.575), (0, -PAN_PIXELS_PER_FRAME / 2)),
+        ((32767 * 0.1, 32767 * 0.1), (0, 0)),
+    ],
+    ids=["right", "left", "down", "half up", "dead zone"],
+)
+def test_left_stick_pans(
+    grid_viewer: Viewer, stick: tuple[float, float], pixels_per_frame: tuple[float, float]
+) -> None:
+    x, y = center(zoomed(grid_viewer), 6, 6)
+    grid_viewer.run(5, left_stick=(round(stick[0]), round(stick[1])))
+    frame = grid_viewer.run()
+    expected = (x - 5 * pixels_per_frame[0], y - 5 * pixels_per_frame[1])
+    assert_near(center(frame, 6, 6), expected, 1)
+
+
+@pytest.mark.parametrize(
     ("direction", "column", "row", "expected_center"),
     [
         ("left", 0, 6, (ZOOMED_CELL / 2, None)),
