@@ -15,7 +15,7 @@ from libretro.api.input import AnalogState, JoypadState
 from libretro.api.log import LogLevel, retro_log_callback, retro_log_printf_t
 from libretro.api.message import MessageTarget, MessageType, retro_message, retro_message_ext
 from libretro.api.video import PixelFormat
-from libretro.drivers import ArrayVideoDriver, LogDriver, MessageDriver
+from libretro.drivers import ArrayVideoDriver, DictOptionDriver, LogDriver, MessageDriver
 from libretro.drivers.input import PortState
 from libretro.drivers.video import FrameBufferSpecial
 from PIL import Image, ImageChops
@@ -333,12 +333,14 @@ class Viewer:
         video: FrameRecorder,
         log: RecordingLogDriver,
         messages: MessageRecorder | None,
+        options: DictOptionDriver,
     ) -> None:
         self.session = session
         self.pad = pad
         self.video = video
         self.log = log
         self.messages = messages
+        self.options = options
 
     @property
     def pixel_format(self) -> PixelFormat:
@@ -387,6 +389,7 @@ class Core:
         log: LogDriver,
         messages: MessageRecorder | None = None,
         can_dupe: bool | None = True,
+        options: DictOptionDriver | None = None,
     ) -> DocviewerSession:
         return DocviewerSession(
             self.core_path,
@@ -395,6 +398,7 @@ class Core:
             video=video,
             log=log,
             message=messages,
+            options=options or DictOptionDriver(),
             log_shim=self.log_shim,
             can_dupe=can_dupe,
         )
@@ -405,19 +409,24 @@ class Core:
         content: str | os.PathLike[str],
         can_dupe: bool | None = True,
         message_version: int | None = 1,
+        options: collections.abc.Mapping[str, str] | None = None,
+        options_version: int = 2,
     ) -> collections.abc.Iterator[Viewer]:
         """Loads content, failing the test if the core rejects it.
 
         can_dupe is passed to DocviewerSession.
         message_version is the frontend's message interface version,
         or None for a frontend without on-screen messages.
+        options are core option values,
+        and options_version is the frontend's core options interface version.
         """
         pad = Pad()
         video = FrameRecorder()
         log = RecordingLogDriver()
         messages = MessageRecorder(message_version) if message_version is not None else None
-        with self._session(content, pad, video, log, messages, can_dupe) as session:
-            yield Viewer(session, pad, video, log, messages)
+        option_driver = DictOptionDriver(options_version, variables=options)
+        with self._session(content, pad, video, log, messages, can_dupe, option_driver) as session:
+            yield Viewer(session, pad, video, log, messages, option_driver)
 
     def load_failure(self, content: str | os.PathLike[str]) -> RecordingLogDriver:
         """Asserts that the core rejects content, and returns what it logged."""

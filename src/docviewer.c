@@ -5,16 +5,20 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
 #include <cairo.h>
 
-#define DOCVIEWER_WIDTH 1920
-#define DOCVIEWER_HEIGHT 1080
+// The output size when the resolution option is unset.
+#define DEFAULT_WIDTH 1920
+#define DEFAULT_HEIGHT 1080
+#define RESOLUTION_OPTION "docviewer_resolution"
 // Holding a zoom button doubles or halves the zoom every second.
 #define ZOOM_PER_SECOND 2
 #define MAX_ZOOM 8
+// Panning speed at 1080 lines; other output heights scale it.
 #define PAN_PIXELS_PER_FRAME 24
 // Left stick deflection below this fraction of full is ignored,
 // so a resting stick that doesn't read exactly 0 doesn't drift.
@@ -41,6 +45,9 @@ struct docviewer_state {
   const struct document_vtable* backend;
   void* document;
 
+  // The output size, from the resolution option.
+  int width;
+  int height;
   cairo_surface_t* framebuffer;
   cairo_surface_t* cached_preview;
 
@@ -115,7 +122,7 @@ static double view_height(void) {
 }
 
 static double fit_scale(void) {
-  return fmin(DOCVIEWER_WIDTH / view_width(), DOCVIEWER_HEIGHT / view_height());
+  return fmin(state.width / view_width(), state.height / view_height());
 }
 
 /// Turns a context whose origin is the displayed page's top-left corner, in points,
@@ -159,8 +166,83 @@ static const struct retro_input_descriptor bindings[] = {
     {0, 0, 0, 0, NULL}
 };
 
+// === Core options
+
+static struct retro_core_option_v2_category option_categories[] = {
+    {NULL, NULL, NULL},
+};
+
+static struct retro_core_option_v2_definition option_definitions[] = {
+    {
+        RESOLUTION_OPTION,
+        "Output Resolution",
+        NULL,
+        "Size of the frames sent to RetroArch.  "
+        "Matching the screen gives the sharpest text, and smaller sizes render faster.  "
+        "Takes effect the next time a document is opened.",
+        NULL,
+        NULL,
+        {
+            {"1280x720", "1280 x 720 (720p)"},
+            {"1600x900", "1600 x 900"},
+            {"1920x1080", "1920 x 1080 (1080p)"},
+            {"2560x1440", "2560 x 1440 (1440p)"},
+            {"3840x2160", "3840 x 2160 (4K)"},
+            {"640x480", "640 x 480 (4:3)"},
+            {"1024x768", "1024 x 768 (4:3)"},
+            {"1440x1080", "1440 x 1080 (4:3)"},
+            {NULL, NULL},
+        },
+        "1920x1080",
+    },
+    {NULL, NULL, NULL, NULL, NULL, NULL, {{NULL, NULL}}, NULL},
+};
+
+// For frontends without core options version 2.  The first value is the default.
+static const struct retro_variable option_variables[] = {
+    {RESOLUTION_OPTION,
+     "Output Resolution; "
+     "1920x1080|1280x720|1600x900|2560x1440|3840x2160|640x480|1024x768|1440x1080"},
+    {NULL, NULL},
+};
+
+static void set_core_options(void) {
+  unsigned version = 0;
+  if (state.environment_cb(RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION, &version) && version >= 2) {
+    struct retro_core_options_v2 options = {option_categories, option_definitions};
+    state.environment_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2, &options);
+  } else {
+    state.environment_cb(RETRO_ENVIRONMENT_SET_VARIABLES, (void*)option_variables);
+  }
+}
+
+/// Reads the output resolution option, or the default if it's unset or invalid.
+static void read_resolution(int* width, int* height) {
+  *width = DEFAULT_WIDTH;
+  *height = DEFAULT_HEIGHT;
+  struct retro_variable variable = {RESOLUTION_OPTION, NULL};
+  if (!state.environment_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &variable) || !variable.value) {
+    return;
+  }
+  char* end;
+  long parsed_width = strtol(variable.value, &end, 10);
+  long parsed_height = *end == 'x' ? strtol(end + 1, &end, 10) : 0;
+  if (*end || parsed_width < 320 || parsed_height < 240 || parsed_width > 7680 ||
+      parsed_height > 4320) {
+    LOG(RETRO_LOG_WARN,
+        "Document Viewer: Invalid output resolution %s; using %d x %d\n",
+        variable.value,
+        DEFAULT_WIDTH,
+        DEFAULT_HEIGHT);
+    return;
+  }
+  *width = (int)parsed_width;
+  *height = (int)parsed_height;
+}
+
 void retro_set_environment(retro_environment_t cb) {
   state.environment_cb = cb;
+  set_core_options();
 }
 
 void retro_set_video_refresh(retro_video_refresh_t cb) {
@@ -185,12 +267,13 @@ void retro_get_system_info(struct retro_system_info* info) {
 
 void retro_get_system_av_info(struct retro_system_av_info* info) {
   memset(info, 0, sizeof(*info));
+  // The output size is read once, when the document is opened.
   info->geometry = (struct retro_game_geometry){
-      .base_width = DOCVIEWER_WIDTH,
-      .base_height = DOCVIEWER_HEIGHT,
-      .max_width = DOCVIEWER_WIDTH,
-      .max_height = DOCVIEWER_HEIGHT,
-      .aspect_ratio = (float)DOCVIEWER_WIDTH / DOCVIEWER_HEIGHT,
+      .base_width = state.width,
+      .base_height = state.height,
+      .max_width = state.width,
+      .max_height = state.height,
+      .aspect_ratio = (float)state.width / (float)state.height,
   };
   info->timing = (struct retro_system_timing){
       .fps = FRAMES_PER_SECOND,
@@ -434,7 +517,7 @@ static bool create_cached_preview(void) {
   double start = now_milliseconds();
   // Allocate a screen-sized surface to render as a preview when panning/zooming.
   cairo_surface_t* preview =
-      cairo_image_surface_create(CAIRO_FORMAT_RGB24, DOCVIEWER_WIDTH, DOCVIEWER_HEIGHT);
+      cairo_image_surface_create(CAIRO_FORMAT_RGB24, state.width, state.height);
   cairo_status_t surface_status = cairo_surface_status(preview);
   if (surface_status != CAIRO_STATUS_SUCCESS) {
     LOG(RETRO_LOG_WARN,
@@ -507,7 +590,7 @@ static void draw_help(cairo_t* cr) {
   cairo_set_source_rgba(cr, 0, 0, 0, 0.75);
   cairo_paint(cr);
 
-  double size = DOCVIEWER_HEIGHT / 24.0;
+  double size = state.height / 24.0;
   double line = size * 1.6;
   double gap = size;
   cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
@@ -527,8 +610,8 @@ static void draw_help(cairo_t* cr) {
   }
 
   // Center the title, the table, and the closing note as one block.
-  double left = round((DOCVIEWER_WIDTH - (button_width + gap + action_width)) / 2);
-  double y = round((DOCVIEWER_HEIGHT - line * (count + 3)) / 2 + size);
+  double left = round((state.width - (button_width + gap + action_width)) / 2);
+  double y = round((state.height - line * (count + 3)) / 2 + size);
   cairo_set_source_rgb(cr, 1, 1, 1);
   cairo_select_font_face(cr, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
   cairo_move_to(cr, left, y);
@@ -565,8 +648,8 @@ static double render_frame(enum render_mode mode) {
   double scaled_page_height = view_height() * scale;
   // Put the page's corner on a whole pixel,
   // so at fit-page zoom the preview can be copied pixel for pixel.
-  double page_x = round((DOCVIEWER_WIDTH - scaled_page_width) / 2 - state.pan_x * scale);
-  double page_y = round((DOCVIEWER_HEIGHT - scaled_page_height) / 2 - state.pan_y * scale);
+  double page_x = round((state.width - scaled_page_width) / 2 - state.pan_x * scale);
+  double page_y = round((state.height - scaled_page_height) / 2 - state.pan_y * scale);
   cairo_translate(cr, page_x, page_y);
   cairo_scale(cr, scale, scale);
   rotate_page(cr);
@@ -767,8 +850,8 @@ static struct input_result process_input(void) {
   }
 
   double scale = fit_scale() * state.zoom_factor;
-  double max_pan_x = fmax(0, view_width() - DOCVIEWER_WIDTH / scale) / 2;
-  double max_pan_y = fmax(0, view_height() - DOCVIEWER_HEIGHT / scale) / 2;
+  double max_pan_x = fmax(0, view_width() - state.width / scale) / 2;
+  double max_pan_y = fmax(0, view_height() - state.height / scale) / 2;
   double stick_x;
   double stick_y;
   read_left_stick(&stick_x, &stick_y);
@@ -784,8 +867,9 @@ static struct input_result process_input(void) {
       -1,
       1
   );
-  double pan_x = clamp(state.pan_x + dx * PAN_PIXELS_PER_FRAME / scale, -max_pan_x, max_pan_x);
-  double pan_y = clamp(state.pan_y + dy * PAN_PIXELS_PER_FRAME / scale, -max_pan_y, max_pan_y);
+  double pan_step = PAN_PIXELS_PER_FRAME * state.height / 1080.0 / scale;
+  double pan_x = clamp(state.pan_x + dx * pan_step, -max_pan_x, max_pan_x);
+  double pan_y = clamp(state.pan_y + dy * pan_step, -max_pan_y, max_pan_y);
   if (pan_x != state.pan_x) {
     state.pan_x = pan_x;
     view_changed = true;
@@ -803,6 +887,22 @@ static struct input_result process_input(void) {
       .view_changed = view_changed,
       .view_controls_held = (buttons & view_buttons) != 0 || stick_x != 0 || stick_y != 0,
   };
+}
+
+/// Returns a new framebuffer of the given size, or NULL after logging why it couldn't be made.
+static cairo_surface_t* create_framebuffer(int width, int height) {
+  cairo_surface_t* framebuffer = cairo_image_surface_create(CAIRO_FORMAT_RGB24, width, height);
+  cairo_status_t status = cairo_surface_status(framebuffer);
+  if (status != CAIRO_STATUS_SUCCESS) {
+    LOG(RETRO_LOG_ERROR,
+        "Document Viewer: Could not create %d x %d framebuffer: %s\n",
+        width,
+        height,
+        cairo_status_to_string(status));
+    cairo_surface_destroy(framebuffer);
+    return NULL;
+  }
+  return framebuffer;
 }
 
 void retro_run(void) {
@@ -828,8 +928,8 @@ void retro_run(void) {
   bool send = state.frame_changed || !state.can_dupe;
   state.video_cb(
       send ? cairo_image_surface_get_data(state.framebuffer) : NULL,
-      DOCVIEWER_WIDTH,
-      DOCVIEWER_HEIGHT,
+      state.width,
+      state.height,
       cairo_image_surface_get_stride(state.framebuffer)
   );
   state.frame_changed = false;
@@ -883,15 +983,9 @@ bool retro_load_game(const struct retro_game_info* game) {
       state.page_count,
       state.page_count == 1 ? "page" : "pages",
       now_milliseconds() - start);
-  state.framebuffer =
-      cairo_image_surface_create(CAIRO_FORMAT_RGB24, DOCVIEWER_WIDTH, DOCVIEWER_HEIGHT);
-  cairo_status_t frame_status = cairo_surface_status(state.framebuffer);
-  if (frame_status != CAIRO_STATUS_SUCCESS) {
-    LOG(RETRO_LOG_ERROR,
-        "Document Viewer: Could not create %d x %d framebuffer: %s\n",
-        DOCVIEWER_WIDTH,
-        DOCVIEWER_HEIGHT,
-        cairo_status_to_string(frame_status));
+  read_resolution(&state.width, &state.height);
+  state.framebuffer = create_framebuffer(state.width, state.height);
+  if (!state.framebuffer) {
     retro_unload_game();
     return false;
   }

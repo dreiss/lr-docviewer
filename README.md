@@ -42,8 +42,12 @@ The left stick pans faster the further it's pushed.
 RetroArch's Reset returns to the first page, upright, at fit-page zoom.
 Close the viewer with your normal RetroArch exit hotkey.
 
-Output is 1920 x 1080, which RetroArch scales to the screen,
-and zoom ranges from fit-page to 8 times that.
+Output is 1920 x 1080 by default, which RetroArch scales to the screen.
+The Output Resolution core option, under Core Options in RetroArch's Quick Menu,
+offers sizes from 640 x 480 to 3840 x 2160, including 4:3 ones.
+Matching your screen gives the sharpest text, and smaller sizes render faster.
+A new size takes effect the next time you open a document.
+Zoom ranges from fit-page to 8 times that.
 Rendering is synchronous, so complex PDFs may briefly pause input.
 With RetroArch's logging verbosity on
 and its core logging level set to Debug,
