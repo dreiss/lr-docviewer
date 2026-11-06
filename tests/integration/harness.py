@@ -13,8 +13,9 @@ from typing import Any, Self, override
 from libretro import Session
 from libretro.api.input import JoypadState
 from libretro.api.log import LogLevel, retro_log_callback, retro_log_printf_t
+from libretro.api.message import MessageTarget, MessageType, retro_message, retro_message_ext
 from libretro.api.video import PixelFormat
-from libretro.drivers import ArrayVideoDriver, LogDriver
+from libretro.drivers import ArrayVideoDriver, LogDriver, MessageDriver
 from libretro.drivers.video import FrameBufferSpecial
 from PIL import Image, ImageChops
 
@@ -52,6 +53,60 @@ class RecordingLogDriver(LogDriver):
     def messages(self, level: LogLevel | None = None) -> list[str]:
         """Returns the messages logged at the given level, or all messages."""
         return [r.message for r in self.records if level is None or r.level == level]
+
+
+@dataclasses.dataclass(frozen=True)
+class Message:
+    """An on-screen message from the core.
+
+    frames is set for RETRO_ENVIRONMENT_SET_MESSAGE;
+    the other optional fields are set for RETRO_ENVIRONMENT_SET_MESSAGE_EXT.
+    """
+
+    text: str
+    frames: int | None = None
+    duration: int | None = None
+    level: LogLevel | None = None
+    target: MessageTarget | None = None
+    type: MessageType | None = None
+
+
+class MessageRecorder(MessageDriver):
+    """Keeps every on-screen message, for a given message interface version."""
+
+    def __init__(self, version: int) -> None:
+        self._version = version
+        self.messages: list[Message] = []
+
+    @property
+    @override
+    def version(self) -> int:
+        return self._version
+
+    @override
+    def set_message(self, message: retro_message | retro_message_ext | None) -> bool:
+        # Copy the fields now, because they point into the core's memory.
+        match message:
+            case retro_message_ext():
+                self.messages.append(
+                    Message(
+                        text=(message.msg or b"").decode(),
+                        duration=message.duration,
+                        level=LogLevel(message.level),
+                        target=MessageTarget(message.target),
+                        type=MessageType(message.type),
+                    )
+                )
+            case retro_message():
+                self.messages.append(
+                    Message(text=(message.msg or b"").decode(), frames=message.frames)
+                )
+            case _:
+                return False
+        return True
+
+    def texts(self) -> list[str]:
+        return [message.text for message in self.messages]
 
 
 class LogShim:
@@ -270,11 +325,13 @@ class Viewer:
         pad: Pad,
         video: FrameRecorder,
         log: RecordingLogDriver,
+        messages: MessageRecorder | None,
     ) -> None:
         self.session = session
         self.pad = pad
         self.video = video
         self.log = log
+        self.messages = messages
 
     @property
     def pixel_format(self) -> PixelFormat:
@@ -315,6 +372,7 @@ class Core:
         pad: Pad,
         video: FrameRecorder,
         log: LogDriver,
+        messages: MessageRecorder | None = None,
         can_dupe: bool | None = True,
     ) -> DocviewerSession:
         return DocviewerSession(
@@ -323,23 +381,30 @@ class Core:
             input=pad.states(),
             video=video,
             log=log,
+            message=messages,
             log_shim=self.log_shim,
             can_dupe=can_dupe,
         )
 
     @contextlib.contextmanager
     def open(
-        self, content: str | os.PathLike[str], can_dupe: bool | None = True
+        self,
+        content: str | os.PathLike[str],
+        can_dupe: bool | None = True,
+        message_version: int | None = 1,
     ) -> collections.abc.Iterator[Viewer]:
         """Loads content, failing the test if the core rejects it.
 
         can_dupe is passed to DocviewerSession.
+        message_version is the frontend's message interface version,
+        or None for a frontend without on-screen messages.
         """
         pad = Pad()
         video = FrameRecorder()
         log = RecordingLogDriver()
-        with self._session(content, pad, video, log, can_dupe) as session:
-            yield Viewer(session, pad, video, log)
+        messages = MessageRecorder(message_version) if message_version is not None else None
+        with self._session(content, pad, video, log, messages, can_dupe) as session:
+            yield Viewer(session, pad, video, log, messages)
 
     def load_failure(self, content: str | os.PathLike[str]) -> RecordingLogDriver:
         """Asserts that the core rejects content, and returns what it logged."""

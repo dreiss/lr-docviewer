@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <cairo.h>
@@ -17,6 +18,8 @@
 // Size of a placeholder for an unloadable first page, in points: US Letter.
 #define PLACEHOLDER_WIDTH 612
 #define PLACEHOLDER_HEIGHT 792
+#define PAGE_MESSAGE_MILLISECONDS 2000
+#define FRAMES_PER_SECOND 60
 
 // === State object
 
@@ -52,6 +55,8 @@ struct docviewer_state {
   bool can_dupe;
   // Whether the framebuffer has changed since it was last sent.
   bool frame_changed;
+  // The frontend's message interface version: 1 or more supports retro_message_ext.
+  unsigned message_version;
 };
 
 static struct docviewer_state state;
@@ -125,7 +130,7 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
       .aspect_ratio = (float)DOCVIEWER_WIDTH / DOCVIEWER_HEIGHT,
   };
   info->timing = (struct retro_system_timing){
-      .fps = 60.0,
+      .fps = FRAMES_PER_SECOND,
       .sample_rate = 0.0,
   };
 }
@@ -228,7 +233,39 @@ static bool load_page(int page_number, double* width, double* height) {
   return true;
 }
 
-/// Selects a page at fit-page zoom, or a placeholder if it can't be loaded.
+/// Briefly shows the page number on screen.
+static void show_page_message(void) {
+  char text[64];
+  snprintf(
+      text,
+      sizeof(text),
+      state.page_failed ? "Page %d of %d couldn't be loaded" : "Page %d of %d",
+      state.page_index + 1,
+      state.page_count
+  );
+  if (state.message_version >= 1) {
+    // A status message replaces the previous one, instead of queueing behind it.
+    struct retro_message_ext message = {
+        .msg = text,
+        .duration = PAGE_MESSAGE_MILLISECONDS,
+        .priority = 1,
+        .level = state.page_failed ? RETRO_LOG_WARN : RETRO_LOG_INFO,
+        .target = RETRO_MESSAGE_TARGET_OSD,
+        .type = RETRO_MESSAGE_TYPE_STATUS,
+        .progress = -1,
+    };
+    state.environment_cb(RETRO_ENVIRONMENT_SET_MESSAGE_EXT, &message);
+  } else {
+    struct retro_message message = {
+        .msg = text,
+        .frames = PAGE_MESSAGE_MILLISECONDS * FRAMES_PER_SECOND / 1000,
+    };
+    state.environment_cb(RETRO_ENVIRONMENT_SET_MESSAGE, &message);
+  }
+}
+
+/// Selects a page at fit-page zoom, or a placeholder if it can't be loaded,
+/// and shows its page number.
 static void select_page(int page_number) {
   double width;
   double height;
@@ -252,6 +289,7 @@ static void select_page(int page_number) {
   if (!state.page_failed && state.backend->prefer_cached_preview) {
     create_cached_preview();
   }
+  show_page_message();
 }
 
 /// Returns true if a different page was selected.
@@ -511,6 +549,11 @@ bool retro_load_game(const struct retro_game_info* game) {
 
   bool can_dupe = false;
   state.can_dupe = state.environment_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &can_dupe) && can_dupe;
+  unsigned message_version = 0;
+  state.message_version =
+      state.environment_cb(RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION, &message_version)
+          ? message_version
+          : 0;
 
   state.backend = backend;
   state.document = backend->open(game->path, document_log);
