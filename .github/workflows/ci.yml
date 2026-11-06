@@ -56,7 +56,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             cmake pkg-config just fonts-dejavu-core \
-            libpoppler-glib-dev libcairo2-dev libzip-dev libjpeg-dev libpng-dev
+            libpoppler-glib-dev libcairo2-dev libzip-dev libjpeg-dev libpng-dev \
+            tesseract-ocr tesseract-ocr-eng
           pip install clang-tidy==22.1.8
       - if: matrix.recipe != 'release'
         run: just venv

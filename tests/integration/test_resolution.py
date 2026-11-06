@@ -57,9 +57,3 @@ def test_pan_speed_follows_the_output_height(core: Core, pdf: pathlib.Path) -> N
         assert before is not None and after is not None
         # 24 pixels a frame at 1080 lines is 16 at 720.
         assert abs((before.left - after.left) - 5 * 16) <= 1
-
-
-def test_help_fits_small_screens(core: Core, pdf: pathlib.Path) -> None:
-    with core.open(pdf, options={OPTION: "640x480"}) as viewer:
-        viewer.run()
-        assert viewer.tap("start").locate((255, 255, 255)) is not None

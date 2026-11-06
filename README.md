@@ -81,8 +81,12 @@ Build for the same architecture as RetroArch:
 a 64-bit core can't load into a 32-bit RetroArch, or the reverse.
 `file` shows each binary's architecture.
 
-Development additionally uses `just`, clang-format, and clang-tidy.
-Its builds treat warnings as errors.
+Development additionally uses `just`, clang-format, and clang-tidy,
+and the tests use Tesseract with its English data
+(`tesseract-ocr` and `tesseract-ocr-eng` with apt,
+`tesseract` and `tesseract-langpack-eng` with dnf)
+to read the help screen.
+Development builds treat warnings as errors.
 
 ```sh
 just release          # build the optimized core with clang-tidy
