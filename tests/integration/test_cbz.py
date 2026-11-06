@@ -91,16 +91,18 @@ def page_size(frame: Frame) -> tuple[int, int]:
 
 
 def test_unreadable_page_is_placeholder(core: Core, tmp_path: pathlib.Path) -> None:
+    red = (200, 0, 0)
+    blue = (0, 0, 200)
     cbz = write_cbz(
         tmp_path / "corrupt.cbz",
         {
-            "page1.png": make_png(1500, 1500),
+            "page1.png": make_png(1500, 1500, red),
             "page2.png": b"not a PNG",
-            "page3.png": make_png(3000, 1000),
+            "page3.png": make_png(3000, 1000, blue),
         },
     )
     with core.open(cbz) as viewer:
-        viewer.run()
+        assert viewer.run().pixel(WIDTH // 2, HEIGHT // 2) == red
         # The placeholder keeps the previous page's size.
         placeholder = viewer.tap("r")
         assert page_size(placeholder) == (HEIGHT, HEIGHT)
@@ -108,14 +110,18 @@ def test_unreadable_page_is_placeholder(core: Core, tmp_path: pathlib.Path) -> N
         errors = viewer.log.messages(LogLevel.ERROR)
         assert any("showing a placeholder" in m for m in errors), errors
 
-        assert page_size(viewer.tap("r")) == (WIDTH, WIDTH // 3)
+        last = viewer.tap("r")
+        assert page_size(last) == (WIDTH, WIDTH // 3)
+        assert last.pixel(WIDTH // 2, HEIGHT // 2) == blue
         assert viewer.tap("l").pixel(WIDTH // 2, HEIGHT // 2) == BLACK
+        assert viewer.tap("l").pixel(WIDTH // 2, HEIGHT // 2) == red
 
 
 def test_unreadable_first_page_is_placeholder(core: Core, tmp_path: pathlib.Path) -> None:
+    blue = (0, 0, 200)
     cbz = write_cbz(
         tmp_path / "corrupt.cbz",
-        {"page1.png": b"not a PNG", "page2.png": make_png(3000, 1000)},
+        {"page1.png": b"not a PNG", "page2.png": make_png(3000, 1000, blue)},
     )
     with core.open(cbz) as viewer:
         placeholder = viewer.run()
@@ -124,7 +130,9 @@ def test_unreadable_first_page_is_placeholder(core: Core, tmp_path: pathlib.Path
         assert height == HEIGHT
         assert abs(width - HEIGHT * 612 / 792) <= 2
         assert placeholder.pixel(WIDTH // 2, HEIGHT // 2) == BLACK
-        assert page_size(viewer.tap("r")) == (WIDTH, WIDTH // 3)
+        second = viewer.tap("r")
+        assert page_size(second) == (WIDTH, WIDTH // 3)
+        assert second.pixel(WIDTH // 2, HEIGHT // 2) == blue
 
 
 def test_hidden_and_macos_entries_are_not_pages(core: Core, tmp_path: pathlib.Path) -> None:
