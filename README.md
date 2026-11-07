@@ -87,6 +87,24 @@ Build for the same architecture as RetroArch:
 a 64-bit core can't load into a 32-bit RetroArch, or the reverse.
 `file` shows each binary's architecture.
 
+On RetroPie, `scriptmodules/` holds a RetroPie-Setup module
+that installs the dependencies, builds the core from the main branch on GitHub,
+and adds a Manuals system to EmulationStation.
+Clone this repository into RetroPie-Setup's `ext` directory to add the module,
+then install it:
+
+```sh
+git clone https://github.com/dreiss/lr-docviewer.git ~/RetroPie-Setup/ext/lr-docviewer
+sudo ~/RetroPie-Setup/retropie_packages.sh lr-docviewer
+```
+
+Then put manuals in `~/RetroPie/roms/manuals` and restart EmulationStation.
+The package appears under Manage Packages, as an experimental package,
+in RetroPie-Setup's menu,
+where it can be updated to the latest commit on GitHub or removed.
+RetroPie-Setup doesn't update the module itself,
+so run `git pull` in `~/RetroPie-Setup/ext/lr-docviewer` first.
+
 Development additionally uses `just`, clang-format, and clang-tidy,
 and the tests use Tesseract with its English data
 (`tesseract-ocr` and `tesseract-ocr-eng` with apt,
