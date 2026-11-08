@@ -1,0 +1,163 @@
+After https://github.com/libretro/RetroArch/issues/18945 is done,
+automatically match render resolution to screen resolution.
+
+After libretro.py releases these fixes,
+bump its pin in requirements.txt and clean up tests/integration/harness.py.
+
+- NULL frame dupes: upstream PR #31, merged to libretro.py's dev branch on 2026-09-23.
+  Remove DocviewerSession.video_refresh.
+- Slow frame buffer allocation: upstream PR #33, merged to libretro.py's dev branch on 2026-11-06.
+  FrameRecorder can keep skipping ArrayVideoDriver's buffer,
+  since it doesn't use it and skipping avoids a copy per frame,
+  but its docstring's reason (0.4 s to fill the buffer) will be out of date.
+- Case-sensitive extensions: upstream PR #32, still open.
+  Add an integration test that loads uppercase .PDF and .CBZ files.
+- If upstream adds a public way to supply a native log callback,
+  or a configurable can_dupe for software video drivers,
+  replace our overrides of DocviewerSession._get_log_interface and _get_can_dupe.
+- libretro.drivers exports the sensor driver's PortState,
+  which shadows the input driver's PortState of the same name.
+  The harness imports it from libretro.drivers.input instead.  Report upstream.
+
+Performance ideas, roughly in priority order.
+Benchmarks are in attic/benchmarks/;
+build each with `cc -O2 FILE $(pkg-config --cflags --libs poppler-glib cairo) -lm`.
+recording_surface.c needs an absolute path to the PDF, and writes PNGs to the current directory.
+
+- Render PDF pages through a Cairo recording surface.
+  On a page turn, have Poppler render the page once into a recording surface,
+  then replay it for the fit-page preview and for every settled render.
+  Poppler re-decodes images on every render and caches nothing,
+  so a scanned JPEG 2000 manual stalls for about 1 s,
+  or 2 s for a fold-out, on the Pi after every zoom or pan.
+  The recording keeps the decoded scan at full resolution,
+  and text and vector art stay sharp at any zoom.
+  Memory grows by the decoded scan (about 11 MB a page, 22 MB for a spread).
+  On the Pi (Cairo 1.16, Poppler 22.12), from attic/benchmarks/recording_surface.c:
+    page 1:  record 790 ms;  direct 811 ms at 1x and 773 ms at 4x;
+             replay 43 ms and 41 ms
+    page 19 (fold-out):  record 1727 ms;  direct 1801 ms and 1722 ms;
+             replay 84 ms and 41 ms
+  So the first view of a page costs the same as now,
+  and settled renders after zooming or panning get about 20x faster.
+  Replays of scans differ from direct renders by at most 6 levels.
+  Blocker: Cairo rounds a pure scaling transform to 24.8 fixed point (1/256)
+  when it replays recorded paths.
+  At 1.8x, a replayed rectangle lands exactly where a direct one would at 461/256,
+  so edges at 90 and 540 land at about 90.04 and 540.24.
+  Vector art drifts by up to about 1/512 of the page size in points
+  (1.5 pixels at the far edge of an 800-point page, at any zoom),
+  and abutting shapes get faint seams.
+  Images and text placement use doubles and aren't affected,
+  nor are rotated views, whose matrices aren't pure scaling.
+  Scales that are binary fractions (1.5, 2, 2.25) are exact; 1.35 and 1.8 aren't.
+  With the change, test_fit_places_grid[pdf] and test_crop_box_limits_the_page fail.
+  attic/benchmarks/recording_scale.c reproduces it with Cairo alone.
+  A tiny shear (xy = 1e-12) in the replay transform avoids the rounding,
+  but it's a hack, and it may knock scans off pixman's fast scaled-image path;
+  measure replay speed on a scan before using it.
+  Options: accept the drift and loosen the tests, use the shear,
+  or use the shear and report the rounding to Cairo upstream.
+  attic/recording-surface.patch has the PDF backend change:
+  record in load_page and replay in render, with the core unchanged.
+- Give each shown page its own preview, sized to the page, drawn with CAIRO_EXTEND_PAD.
+  The preview is now one screen-sized image, clipped to the pages,
+  and enlarging it blends each page's edge with whatever surrounds it in the image
+  (white now; grey made the edges visibly grey).
+  Separate previews fix the outer edges, the seam between two pages,
+  and pages of different heights, and save memory.
+  It also makes PDF match CBZ, which draws each page from its image with EXTEND_PAD.
+  Simplest after the recording surface: with cheap replays,
+  each preview can be a whole number of pixels with the page stretched under a pixel to fill it,
+  and the view can always get a settled replay, even at fit-page zoom.
+  Without recording, the fit-page view has to stay an exact pixel copy
+  to avoid a second full render on every page turn,
+  so previews have to start on whole pixels and partial edge pixels stay blended with white.
+- Stop painting pixels twice in render_frame.
+  Paint the grey background only outside the page,
+  and skip the white backing when the opaque preview covers it.
+  In a laptop profile of panning, these fills were about 19% of samples,
+  roughly 30% of the core's frame time.
+  The optimization branch has a version in two commits,
+  each about 10% faster a frame while panning at 4x on the laptop:
+  backends draw pages opaquely (PDF paints its paper; CBZ flattens transparent PNGs),
+  and the background fill leaves out whole pixels that pages cover.
+  Redo it after per-page previews.
+- Decode the next page in the background while the current one is shown,
+  to hide page-turn cost when reading forward.
+  Needs a worker thread and probably a second PopplerDocument,
+  since Poppler isn't safe to share between threads.
+- Render a margin around the view when it settles, and reuse it while panning nearby.
+  While panning, the view is the fit-page preview enlarged, which is very blurry at 8x.
+  A margin keeps panning sharp at high zoom without a full render per frame.
+- Render on a worker thread that owns the backend, so a long render doesn't block retro_run,
+  and with it RetroArch's menu and hotkeys.
+  The backends keep their own state with no globals, which helps.
+  Overlaps with decoding the next page in the background, above.
+- Decide in the core, not with a per-backend flag, when a preview pays off.
+  CBZ sets prefer_cached_preview to false,
+  so every CBZ frame scales the full decoded image to the screen.
+  A preview helps whenever the image is being shrunk, whatever the format.
+- Use nearest-neighbor filtering for the preview while zoom or pan buttons are held,
+  if gestures can't hold 60 fps.
+  About 3x faster than padded bilinear in attic/benchmarks/preview_scaling.c;
+  the settled render replaces the blocky frame on release.
+  The Pi already holds 60 fps while panning (7.6 ms average, 10.1 ms worst per frame),
+  so this isn't needed yet.
+- Hardware rendering through a libretro OpenGL context:
+  upload each page's preview once as a texture and scale on the GPU.
+  Removes the core's per-frame CPU work and RetroArch's frame copy
+  (14% of samples in the laptop profile, in gl2_renderchain_copy_frame).
+  The largest change; Pi 4 and 5 have OpenGL ES 3.1, Pi 3 and earlier ES 2.0.
+- Scroll instead of redrawing while panning at a fixed zoom:
+  shift the existing pixels and draw only the exposed strip.
+  Doesn't help zooming, and adds complexity.
+- Downscale high-resolution CBZ pages on load.
+  Deferred until CBZ load times on the Pi show it matters.
+  This would also fix pages over the 2^24-pixel cap, which now show a black placeholder;
+  a letter-size page scanned at 600 dpi is about 34 megapixels.
+  For JPEG, have libjpeg decode at 1/2, 1/4, or 1/8 size (scale_denom), which is cheap;
+  for PNG, shrink rows as they're decoded.
+  Keep reporting the original page size, so the layout doesn't change.
+- Try RetroArch's glcore or vulkan video driver instead of gl,
+  in case they upload frames more cheaply.  Unverified.
+
+Ruled out:
+- OpenJPEG threads (OPJ_NUM_THREADS, or opj_decompress -threads) barely help,
+  and Poppler doesn't set a thread count.
+- Decoding JPEG 2000 at reduced resolution is 4x faster,
+  and half resolution suits a fit-page preview,
+  but poppler-glib offers no way to request it.
+- Detecting image-only pages to cache the scan directly isn't possible,
+  because poppler-glib doesn't expose vector drawing.
+  The recording surface makes it unnecessary.
+
+Cleanups:
+- Open documents through a stream instead of a path,
+  so the core can use the frontend's virtual file system (libretro VFS).
+  attic/android-notes.txt says Android needs it.
+  Poppler-glib can open from bytes or a GInputStream,
+  and libzip can read through a custom source.
+  Cheaper to change now, while there are only two backends.
+- List the supported extensions in one place.
+  They're in the backend vtables, in valid_extensions in retro_get_system_info,
+  and in docviewer_libretro.info.
+- Share one extension helper:
+  extension_matches in docviewer.c and extension_is in cbz_document.c do the same job.
+- Check page dimensions in one layer.
+  pdf_document.c rejects non-finite and non-positive sizes,
+  and docviewer.c's load_page rejects sizes outside 0.01 to 1e8, with different messages.
+- Give document_log_t a level.
+  Backend messages all log at one level,
+  and a page that fails to load is logged twice, by the backend and by the core.
+
+Deferred features, once the basic versions work:
+- CBZ pages in WebP and GIF.
+- Natural sort for CBZ page names (page2 before page10), which comic readers expect.
+  The README documents bytewise ordering now, so decide whether to change it.
+- Fit-to-width zoom.
+  A portrait page on a 16:9 screen fills less than half the width at fit-page zoom.
+- Core options for the page mode and rotation,
+  so RetroArch can save them per manual.
+- Remember the page, zoom, and rotation for each manual,
+  for example by exposing them as save RAM, which RetroArch saves to a .srm file.
