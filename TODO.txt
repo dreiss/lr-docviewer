@@ -24,42 +24,50 @@ Benchmarks are in attic/benchmarks/;
 build each with `cc -O2 FILE $(pkg-config --cflags --libs poppler-glib cairo) -lm`.
 recording_surface.c needs an absolute path to the PDF, and writes PNGs to the current directory.
 
-- Render PDF pages through a Cairo recording surface.
-  On a page turn, have Poppler render the page once into a recording surface,
-  then replay it for the fit-page preview and for every settled render.
+- Replay more kinds of PDF page from a Cairo recording surface.
+  Pages with no strokes and at most one fill, paint, or mask are already replayed,
+  which covers full-page scans.
+  Their first render records them, and the preview and all later renders replay that.
+  A tee also sends the page to an observer of a small image, to count its operations.
+  Other pages then render directly, so that one extra pass slows their page turns.
+  A transparency group counts as one operation, whatever's inside,
+  so vector art that's entirely in one group is replayed, and drifts.
   Poppler re-decodes images on every render and caches nothing,
   so a scanned JPEG 2000 manual stalls for about 1 s,
-  or 2 s for a fold-out, on the Pi after every zoom or pan.
-  The recording keeps the decoded scan at full resolution,
-  and text and vector art stay sharp at any zoom.
+  or 2 s for a fold-out, on the Pi after every zoom or pan without this.
   Memory grows by the decoded scan (about 11 MB a page, 22 MB for a spread).
   On the Pi (Cairo 1.16, Poppler 22.12), from attic/benchmarks/recording_surface.c:
     page 1:  record 790 ms;  direct 811 ms at 1x and 773 ms at 4x;
              replay 43 ms and 41 ms
     page 19 (fold-out):  record 1727 ms;  direct 1801 ms and 1722 ms;
              replay 84 ms and 41 ms
-  So the first view of a page costs the same as now,
-  and settled renders after zooming or panning get about 20x faster.
-  Replays of scans differ from direct renders by at most 6 levels.
-  Blocker: Cairo rounds a pure scaling transform to 24.8 fixed point (1/256)
+  Not checked on the Pi yet, through the core.
+  What stops other pages: Cairo rounds a pure scaling transform to 24.8 fixed point (1/256)
   when it replays recorded paths.
   At 1.8x, a replayed rectangle lands exactly where a direct one would at 461/256,
   so edges at 90 and 540 land at about 90.04 and 540.24.
   Vector art drifts by up to about 1/512 of the page size in points
   (1.5 pixels at the far edge of an 800-point page, at any zoom),
   and abutting shapes get faint seams.
-  Images and text placement use doubles and aren't affected,
-  nor are rotated views, whose matrices aren't pure scaling.
+  Text was pixel-identical to a direct render in a test with three fonts.
+  Rotated views are not affected either, since their matrices aren't pure scaling.
   Scales that are binary fractions (1.5, 2, 2.25) are exact; 1.35 and 1.8 aren't.
-  With the change, test_fit_places_grid[pdf] and test_crop_box_limits_the_page fail.
-  attic/benchmarks/recording_scale.c reproduces it with Cairo alone.
-  A tiny shear (xy = 1e-12) in the replay transform avoids the rounding,
+  A scan's image doesn't move, but Poppler draws it as a filled rectangle,
+  so its right and bottom edges do, by under a pixel.
+  In the laptop's Super Mario World manual, that changes the shade of the line of pixels
+  at the page's edge, and the column at the seam between two pages.
+  Replays also keep the image filter chosen when recording,
+  so scans stay smooth at 8x, where a direct render would be blocky.
+  attic/benchmarks/recording_scale.c reproduces the rounding with Cairo alone.
+  A tiny shear (xy = 1e-12) in the replay transform avoids it,
   but it's a hack, and it may knock scans off pixman's fast scaled-image path;
   measure replay speed on a scan before using it.
-  Options: accept the drift and loosen the tests, use the shear,
-  or use the shear and report the rounding to Cairo upstream.
-  attic/recording-surface.patch has the PDF backend change:
-  record in load_page and replay in render, with the core unchanged.
+  Options for pages with vector art: keep rendering them directly, use the shear,
+  or report the rounding to Cairo upstream.
+  Cairo's observer can't watch a recording surface.
+  It writes a pixel to its target after each operation (_cairo_surface_sync),
+  which on a recording becomes a visible square at the middle of the operation.
+  Consider reporting that to Cairo upstream.
 - Give each shown page its own preview, sized to the page, drawn with CAIRO_EXTEND_PAD.
   The preview is now one screen-sized image, clipped to the pages,
   and enlarging it blends each page's edge with whatever surrounds it in the image

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PDF page geometry and damaged files."""
+"""PDF page geometry, replaying recorded pages, and damaged files."""
 
 import collections.abc
 import pathlib
@@ -7,8 +7,8 @@ import pathlib
 import pytest
 from libretro.api.log import LogLevel
 
-from content import GRID_CELLS, PdfPage, grid_color, write_pdf
-from harness import HEIGHT, Bounds, Core
+from content import GRID_CELLS, PdfPage, grid_color, make_checker_png, write_pdf
+from harness import HEIGHT, Bounds, Core, Viewer
 
 # A page displayed as 600 x 800 points fits the screen at a scale of 1.35.
 PAGE = Bounds(555, 0, 1365, HEIGHT)
@@ -49,6 +49,51 @@ def test_crop_box_limits_the_page(core: Core, tmp_path: pathlib.Path) -> None:
         assert frame.locate(grid_color(0, 6, 0)) == Bounds(690, 0, 780, 90)
         assert frame.locate(grid_color(0, LAST, LAST)) == Bounds(1140, 990, 1230, HEIGHT)
         assert frame.locate(grid_color(0, 5, 0)) is None
+
+
+CHECKER = ((200, 40, 40), (40, 40, 200))
+
+
+def colors_at_max_zoom(viewer: Viewer) -> set[tuple[int, int, int]]:
+    """Returns the colors in the settled view of the middle of the page at maximum zoom."""
+    viewer.run(4 * 60, y=True)
+    view = viewer.run().image().crop((800, 400, 1120, 680))
+    return {color for _, color in view.getcolors(view.width * view.height)}
+
+
+def test_scan_is_replayed(core: Core, tmp_path: pathlib.Path) -> None:
+    # Poppler stops smoothing images enlarged 4 times or more when it renders
+    # (see getFilterForSurface in its CairoOutputDev.cc),
+    # but a recording keeps the smoothing it was recorded with, at 1 pixel to a point.
+    pdf = write_pdf(
+        tmp_path / "scan.pdf", [PdfPage(600, 600, image=make_checker_png(600, 600, CHECKER))]
+    )
+    with core.open(pdf) as viewer:
+        assert len(colors_at_max_zoom(viewer)) > len(CHECKER)
+
+
+def test_replay_leaves_no_mark_at_the_page_center(core: Core, tmp_path: pathlib.Path) -> None:
+    pdf = write_pdf(
+        tmp_path / "scan.pdf", [PdfPage(600, 600, image=make_checker_png(600, 600, CHECKER))]
+    )
+    with core.open(pdf) as viewer:
+        viewer.run(4 * 60, y=True)
+        # Observing a recording would add a square of one color, a point wide
+        # (see _cairo_surface_sync in Cairo's cairo-surface-observer.c),
+        # next to the center of the page, which is 14.4 pixels wide at this zoom.
+        square = viewer.run().image().crop((961, 541, 973, 553))
+        assert len(square.getcolors(square.width * square.height)) > 1
+
+
+def test_scan_with_vector_art_is_rendered_directly(core: Core, tmp_path: pathlib.Path) -> None:
+    # Rendered directly, Poppler doesn't smooth the image at this zoom,
+    # so only its own colors appear; see test_scan_is_replayed.
+    pdf = write_pdf(
+        tmp_path / "scan.pdf",
+        [PdfPage(600, 600, image=make_checker_png(600, 600, CHECKER), outlined=True)],
+    )
+    with core.open(pdf) as viewer:
+        assert colors_at_max_zoom(viewer) == set(CHECKER)
 
 
 @pytest.mark.parametrize(

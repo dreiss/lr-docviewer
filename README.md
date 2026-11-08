@@ -64,6 +64,9 @@ During PDF zooming and panning,
 the viewer transforms a screen-resolution preview.
 On the first idle frame, Poppler renders the visible view
 directly into the framebuffer at full quality.
+Pages with at most one drawing operation other than text, such as scans,
+are recorded once and replayed for the preview and every later render,
+which avoids decoding their images again.
 CBZ pages are transformed directly from their decoded image surface.
 
 Rendering is synchronous, so complex PDFs may briefly pause input.

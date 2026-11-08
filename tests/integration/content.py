@@ -8,6 +8,7 @@ import pathlib
 import zipfile
 
 from PIL import Image
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
 GRID_CELLS = 12
@@ -63,6 +64,16 @@ def make_grid_png(width: int, height: int, page: int = 0) -> bytes:
     return _encode(_grid_image(width, height, page), "PNG")
 
 
+def make_checker_png(width: int, height: int, rgbs: tuple[tuple[int, int, int], ...]) -> bytes:
+    """Returns a PNG whose pixels alternate between two colors, like a checkerboard."""
+    image = Image.new("RGB", (width, height), rgbs[0])
+    for x in range(width):
+        for y in range(height):
+            if (x + y) % 2:
+                image.putpixel((x, y), rgbs[1])
+    return _encode(image, "PNG")
+
+
 def write_cbz(path: pathlib.Path, entries: collections.abc.Mapping[str, bytes]) -> pathlib.Path:
     """Writes a CBZ whose members appear in the given order."""
     with zipfile.ZipFile(path, "w") as archive:
@@ -75,7 +86,8 @@ def write_cbz(path: pathlib.Path, entries: collections.abc.Mapping[str, bytes]) 
 class PdfPage:
     """A PDF page, measured in points.
 
-    The page is filled with a solid color, or with a grid if grid is set.
+    The page is filled with a solid color, with a grid if grid is set,
+    or with an image if image is set, and it has a line around it if outlined is set.
     Grid colors use the page's index in the document; see grid_color().
 
     width and height are the page's size as displayed.
@@ -89,6 +101,8 @@ class PdfPage:
     height: float
     rgb: tuple[int, int, int] = (128, 128, 128)
     grid: bool = False
+    image: bytes | None = None
+    outlined: bool = False
     rotation: int = 0
     crop: tuple[float, float, float, float] | None = None
 
@@ -113,7 +127,9 @@ def write_pdf(path: pathlib.Path, pages: collections.abc.Sequence[PdfPage]) -> p
         width, height = page.width, page.height
         if page.rotation % 180:
             width, height = height, width
-        if not page.grid:
+        if page.image:
+            document.drawImage(ImageReader(io.BytesIO(page.image)), 0, 0, width, height)
+        elif not page.grid:
             fill(page.rgb, 0, 0, width, height)
         else:
             cell_width = width / GRID_CELLS
@@ -129,6 +145,8 @@ def write_pdf(path: pathlib.Path, pages: collections.abc.Sequence[PdfPage]) -> p
                         cell_width,
                         cell_height,
                     )
+        if page.outlined:
+            document.rect(0, 0, width, height, stroke=1, fill=0)
         document.showPage()
     document.save()
     return path
