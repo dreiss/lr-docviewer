@@ -155,6 +155,17 @@ static int first_shown(void) {
 
 /// Returns the index of the last page on screen.
 static int last_shown(void) {
+  if (state.shown_count < 1) {
+    fprintf(
+        stderr,
+        "%s:%d: %s: expected state.shown_count >= 1, got %d\n",
+        __FILE__,
+        __LINE__,
+        __func__,
+        state.shown_count
+    );
+    abort();
+  }
   return state.shown[state.shown_count - 1].index;
 }
 

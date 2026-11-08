@@ -2,5 +2,8 @@ Checks: |
   -*,
   bugprone-*,
   -bugprone-easily-swappable-parameters,
-WarningsAsErrors: 'bugprone-*'
+  clang-analyzer-*,
+  # Its only advice is to use snprintf_s and the like, which glibc doesn't have.
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+WarningsAsErrors: 'bugprone-*,clang-analyzer-*'
 HeaderFilterRegex: '(^|/)src/'
