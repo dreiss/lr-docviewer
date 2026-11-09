@@ -70,12 +70,13 @@ def make_grid_png(width: int, height: int, page: int = 0) -> bytes:
 
 def make_checker_png(width: int, height: int, rgbs: tuple[tuple[int, int, int], ...]) -> bytes:
     """Returns a PNG whose pixels alternate between two colors, like a checkerboard."""
-    image = Image.new("RGB", (width, height), rgbs[0])
-    for x in range(width):
-        for y in range(height):
-            if (x + y) % 2:
-                image.putpixel((x, y), rgbs[1])
-    return _encode(image, "PNG")
+    first, second = bytes(rgbs[0]), bytes(rgbs[1])
+    rows = (
+        (first + second) * (width // 2 + 1),
+        (second + first) * (width // 2 + 1),
+    )
+    data = b"".join(rows[y % 2][: width * 3] for y in range(height))
+    return _encode(Image.frombytes("RGB", (width, height), data), "PNG")
 
 
 def write_cbz(path: pathlib.Path, entries: collections.abc.Mapping[str, bytes]) -> pathlib.Path:

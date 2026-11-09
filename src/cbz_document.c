@@ -598,7 +598,7 @@ static void close_page(void* opaque_page) {
 }
 
 /// Returns true if the page was rendered without a Cairo error.
-static bool render(void* opaque_page, cairo_t* cr) {
+static bool render(void* opaque_page, cairo_t* cr, enum document_quality quality) {
   struct cbz_loaded_page* page = opaque_page;
 
   if (!page->image) {
@@ -610,6 +610,11 @@ static bool render(void* opaque_page, cairo_t* cr) {
     // so the image neither fades at its edges nor bleeds past them.
     cairo_set_source_surface(cr, page->image, 0, 0);
     cairo_pattern_set_extend(cairo_get_source(cr), CAIRO_EXTEND_PAD);
+    if (quality == DOCUMENT_QUALITY_FAST) {
+      // The default filter is slow for shrinking large images, and bilinear aliases then,
+      // which is fine for the moment that a zoom or pan lasts.
+      cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_BILINEAR);
+    }
     cairo_rectangle(cr, 0, 0, page->image_width, page->image_height);
     cairo_fill(cr);
   }

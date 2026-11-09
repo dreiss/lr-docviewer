@@ -11,6 +11,14 @@ typedef void (*document_log_t)(const char* message);
 /// Formats and reports a backend diagnostic when a callback is available.
 void document_log_message(document_log_t log, const char* format, ...);
 
+/// How carefully a backend should draw a page.
+enum document_quality {
+  /// As well as the backend can.
+  DOCUMENT_QUALITY_FULL,
+  /// During a zoom or pan, when speed matters more.  Backends may treat this as full quality.
+  DOCUMENT_QUALITY_FAST,
+};
+
 struct document_vtable {
   /// Human-readable backend name used in log messages.
   const char* name;
@@ -31,7 +39,7 @@ struct document_vtable {
   void (*close_page)(void* page);
   /// Draws a loaded page from (0, 0) to its width and height, leaving nothing transparent,
   /// and returns true if it was rendered without an error.
-  bool (*render)(void* page, cairo_t* cr);
+  bool (*render)(void* page, cairo_t* cr, enum document_quality quality);
 };
 
 extern const struct document_vtable cbz_document_vtable;

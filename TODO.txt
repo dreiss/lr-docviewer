@@ -98,8 +98,10 @@ recording_surface.c needs an absolute path to the PDF, and writes PNGs to the cu
   Overlaps with decoding the next page in the background, above.
 - Decide in the core, not with a per-backend flag, when a preview pays off.
   CBZ sets prefer_cached_preview to false,
-  so every CBZ frame scales the full decoded image to the screen.
-  A preview helps whenever the image is being shrunk, whatever the format.
+  so every CBZ frame scales the full decoded image to the screen,
+  with a bilinear filter during gestures, which aliases if the image is shrunk.
+  A preview would avoid that, but it would blur enlarged pages,
+  which CBZ can now draw sharply at full speed.
 - Use nearest-neighbor filtering for the preview while zoom or pan buttons are held,
   if gestures can't hold 60 fps.
   About 3x faster than padded bilinear in attic/benchmarks/preview_scaling.c;

@@ -196,7 +196,8 @@ static cairo_surface_t* record_page(const struct pdf_page* page) {
 }
 
 /// Returns true if the page was rendered without a Cairo error.
-static bool render(void* opaque_page, cairo_t* cr) {
+static bool render(void* opaque_page, cairo_t* cr, enum document_quality quality) {
+  (void)quality; // The core uses the cached preview instead during zooms and pans.
   struct pdf_page* page = opaque_page;
 
   if (!page->render_attempted) {

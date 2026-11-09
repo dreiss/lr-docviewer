@@ -67,7 +67,8 @@ directly into the framebuffer at full quality.
 Pages with at most one drawing operation other than text, such as scans,
 are recorded once and replayed for the preview and every later render,
 which avoids decoding their images again.
-CBZ pages are transformed directly from their decoded image surface.
+CBZ pages are transformed directly from their decoded image surface,
+with a faster filter during zooming and panning.
 
 Rendering is synchronous, so complex PDFs may briefly pause input.
 With RetroArch's logging verbosity on and its core logging level set to Debug,

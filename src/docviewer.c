@@ -671,7 +671,11 @@ static void rotate_view(int quarter_turns) {
 }
 
 enum render_mode {
+  /// Use the cached preview, if there is one.
   RENDER_INTERACTIVE,
+  /// During a zoom or pan: the same, but draw quickly if there isn't one.
+  RENDER_GESTURE,
+  /// Draw the view at full quality.
   RENDER_SETTLED,
 };
 
@@ -680,7 +684,7 @@ enum render_mode {
 /// Draws the shown pages opaquely, in spread coordinates,
 /// with black placeholders for pages that couldn't be loaded.
 /// Returns false if any failed to render.
-static bool draw_pages(cairo_t* cr) {
+static bool draw_pages(cairo_t* cr, enum document_quality quality) {
   bool rendered = true;
   for (int i = 0; i < state.shown_count; i++) {
     const struct shown_page* page = &state.shown[i];
@@ -692,7 +696,7 @@ static bool draw_pages(cairo_t* cr) {
     }
     cairo_save(cr);
     cairo_translate(cr, page->x, page->y);
-    rendered &= state.backend->render(page->page, cr);
+    rendered &= state.backend->render(page->page, cr, quality);
     cairo_restore(cr);
   }
   return rendered;
@@ -729,7 +733,7 @@ static bool create_cached_preview(void) {
   double preview_scale = fit_scale();
   cairo_scale(cr, preview_scale, preview_scale);
   rotate_spread(cr);
-  bool rendered = draw_pages(cr);
+  bool rendered = draw_pages(cr, DOCUMENT_QUALITY_FULL);
   cairo_status_t context_status = cairo_status(cr);
   cairo_destroy(cr);
   cairo_surface_flush(preview);
@@ -849,7 +853,7 @@ static double render_frame(enum render_mode mode) {
 
   bool rendered = true;
   // Spreads of only placeholders have no cached preview.
-  bool use_cached_preview = mode == RENDER_INTERACTIVE && state.cached_preview;
+  bool use_cached_preview = mode != RENDER_SETTLED && state.cached_preview;
   if (use_cached_preview) {
     // While panning/zooming, just render the cached preview
     // to avoid blocking on a slow renderer.
@@ -872,7 +876,8 @@ static double render_frame(enum render_mode mode) {
     cairo_paint(cr);
     cairo_restore(cr);
   } else {
-    rendered = draw_pages(cr);
+    rendered =
+        draw_pages(cr, mode == RENDER_GESTURE ? DOCUMENT_QUALITY_FAST : DOCUMENT_QUALITY_FULL);
   }
   if (state.help_visible) {
     draw_help(cr);
@@ -895,7 +900,8 @@ static double render_frame(enum render_mode mode) {
     LOG(RETRO_LOG_ERROR, "Document Viewer: Could not render %s\n", shown);
   }
   // At fit-page zoom, the copied preview is already the full-quality view.
-  state.settled_render_pending = use_cached_preview && state.zoom_factor != 1;
+  state.settled_render_pending =
+      use_cached_preview ? state.zoom_factor != 1 : mode == RENDER_GESTURE;
   state.frame_changed = true;
   return now_milliseconds() - start;
 }
@@ -1107,7 +1113,8 @@ void retro_run(void) {
     log_gesture();
   }
   if (input.view_changed) {
-    double milliseconds = render_frame(RENDER_INTERACTIVE);
+    double milliseconds =
+        render_frame(input.view_controls_held ? RENDER_GESTURE : RENDER_INTERACTIVE);
     if (input.view_controls_held) {
       record_gesture_frame(milliseconds);
     } else {

@@ -14,7 +14,15 @@ import pathlib
 
 import pytest
 
-from content import GRID_CELLS, PdfPage, grid_color, make_grid_png, write_cbz, write_pdf
+from content import (
+    GRID_CELLS,
+    PdfPage,
+    grid_color,
+    make_checker_png,
+    make_grid_png,
+    write_cbz,
+    write_pdf,
+)
 from harness import HEIGHT, WIDTH, Bounds, Core, Frame, Viewer
 
 CELL = HEIGHT // GRID_CELLS
@@ -195,11 +203,39 @@ def test_pdf_preview_matches_final_render(core: Core, tmp_path: pathlib.Path) ->
             assert_near(center(preview, column, row), center(final, column, row), 1)
 
 
-def test_cbz_zoom_is_final_immediately(core: Core, tmp_path: pathlib.Path) -> None:
-    cbz = write_cbz(tmp_path / "grid.cbz", {"page.png": make_grid_png(1200, 1200)})
-    with core.open(cbz) as viewer:
+CHECKER = ((200, 40, 40), (40, 40, 200))
+SMOOTH_RANGE = 32
+
+
+def red_range(frame: Frame) -> int:
+    """Returns how much the red channel varies in the middle of the screen.
+
+    A checkerboard of single pixels, shrunk to under 3/4 of its size,
+    averages out to one color at full quality,
+    but bilinear filtering, which Cairo also uses for gentler shrinking, makes it alias.
+    """
+    low, high = frame.image().crop((800, 400, 1120, 680)).getextrema()[0]
+    return high - low
+
+
+def test_cbz_zoom_draws_quickly_and_settles_at_full_quality(
+    core: Core, tmp_path: pathlib.Path
+) -> None:
+    image = make_checker_png(1600, 1600, CHECKER)
+    with core.open(write_cbz(tmp_path / "checker.cbz", {"page.png": image})) as viewer:
         viewer.run()
-        zoomed_frame = viewer.run(y=True)
-        assert viewer.run() == zoomed_frame
-        # The idle frame repeats the zoomed one instead of rendering again.
+        assert red_range(viewer.run(y=True)) > SMOOTH_RANGE
+        assert red_range(viewer.run()) <= SMOOTH_RANGE
+        # Once settled, the idle frame repeats instead of rendering again.
+        viewer.run()
+        assert viewer.video.refreshes[-1] is False
+
+
+def test_cbz_page_turn_is_full_quality_immediately(core: Core, tmp_path: pathlib.Path) -> None:
+    image = make_checker_png(1600, 1600, CHECKER)
+    pages = {"page1.png": image, "page2.png": image}
+    with core.open(write_cbz(tmp_path / "checker.cbz", pages)) as viewer:
+        assert red_range(viewer.run()) <= SMOOTH_RANGE
+        assert red_range(viewer.tap("r")) <= SMOOTH_RANGE
+        viewer.run()
         assert viewer.video.refreshes[-1] is False
