@@ -49,9 +49,13 @@ def _grid_image(width: int, height: int, page: int) -> Image.Image:
     return image
 
 
-def make_png(width: int, height: int, rgb: tuple[int, int, int] = (128, 128, 128)) -> bytes:
-    """Returns a solid-color 8-bit RGB PNG."""
-    return _encode(Image.new("RGB", (width, height), rgb), "PNG")
+def make_png(
+    width: int, height: int, rgb: tuple[int, int, int] = (128, 128, 128), alpha: int = 255
+) -> bytes:
+    """Returns a solid-color 8-bit PNG, with an alpha channel if alpha is below 255."""
+    if alpha == 255:
+        return _encode(Image.new("RGB", (width, height), rgb), "PNG")
+    return _encode(Image.new("RGBA", (width, height), (*rgb, alpha)), "PNG")
 
 
 def make_jpeg(width: int, height: int, rgb: tuple[int, int, int] = (128, 128, 128)) -> bytes:
@@ -86,8 +90,9 @@ def write_cbz(path: pathlib.Path, entries: collections.abc.Mapping[str, bytes]) 
 class PdfPage:
     """A PDF page, measured in points.
 
-    The page is filled with a solid color, with a grid if grid is set,
-    or with an image if image is set, and it has a line around it if outlined is set.
+    The page is filled with an image if image is set, with a grid if grid is set,
+    or else with a solid color, or left blank if rgb is None.
+    It has a line around it if outlined is set.
     Grid colors use the page's index in the document; see grid_color().
 
     width and height are the page's size as displayed.
@@ -99,7 +104,7 @@ class PdfPage:
 
     width: float
     height: float
-    rgb: tuple[int, int, int] = (128, 128, 128)
+    rgb: tuple[int, int, int] | None = (128, 128, 128)
     grid: bool = False
     image: bytes | None = None
     outlined: bool = False
@@ -129,9 +134,7 @@ def write_pdf(path: pathlib.Path, pages: collections.abc.Sequence[PdfPage]) -> p
             width, height = height, width
         if page.image:
             document.drawImage(ImageReader(io.BytesIO(page.image)), 0, 0, width, height)
-        elif not page.grid:
-            fill(page.rgb, 0, 0, width, height)
-        else:
+        elif page.grid:
             cell_width = width / GRID_CELLS
             cell_height = height / GRID_CELLS
             for column in range(GRID_CELLS):
@@ -145,6 +148,8 @@ def write_pdf(path: pathlib.Path, pages: collections.abc.Sequence[PdfPage]) -> p
                         cell_width,
                         cell_height,
                     )
+        elif page.rgb is not None:
+            fill(page.rgb, 0, 0, width, height)
         if page.outlined:
             document.rect(0, 0, width, height, stroke=1, fill=0)
         document.showPage()

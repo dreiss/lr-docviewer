@@ -18,6 +18,8 @@ struct pdf_document {
 struct pdf_page {
   document_log_t log;
   PopplerPage* page;
+  double width;
+  double height;
   bool render_attempted;
   // A recording to replay instead of rendering the page, or NULL; see record_page().
   cairo_surface_t* recording;
@@ -114,6 +116,8 @@ static void* load_page(void* opaque_document, int page_number, double* width, do
   }
   page->log = document->log;
   page->page = poppler_page;
+  page->width = page_width;
+  page->height = page_height;
   *width = page_width;
   *height = page_height;
   return page;
@@ -146,11 +150,8 @@ static void count_operation(cairo_surface_t* observer, cairo_surface_t* target, 
 /// Cairo doesn't say what an operation drew,
 /// so only pages with at most one operation are safe, not counting text, which isn't affected.
 /// Other pages have to be rendered again, so they pay for this one extra pass.
-static cairo_surface_t* record_page(PopplerPage* page) {
-  double width;
-  double height;
-  poppler_page_get_size(page, &width, &height);
-  cairo_rectangle_t extents = {0, 0, width, height};
+static cairo_surface_t* record_page(const struct pdf_page* page) {
+  cairo_rectangle_t extents = {0, 0, page->width, page->height};
   cairo_surface_t* recording = cairo_recording_surface_create(CAIRO_CONTENT_COLOR_ALPHA, &extents);
 
   // An observer can't watch the recording itself.
@@ -159,9 +160,9 @@ static cairo_surface_t* record_page(PopplerPage* page) {
   // which would add a patch of that pixel's color to a recording.
   // So a tee also sends the page to an observer of a small image, just to count operations.
   // It doesn't matter what happens to that image, since it's discarded.
-  double scale = COUNTING_IMAGE_SIZE / fmax(width, height);
+  double scale = COUNTING_IMAGE_SIZE / fmax(page->width, page->height);
   cairo_surface_t* image = cairo_image_surface_create(
-      CAIRO_FORMAT_RGB24, (int)ceil(width * scale), (int)ceil(height * scale)
+      CAIRO_FORMAT_RGB24, (int)ceil(page->width * scale), (int)ceil(page->height * scale)
   );
   cairo_surface_t* observer = cairo_surface_create_observer(image, CAIRO_SURFACE_OBSERVER_NORMAL);
   cairo_surface_set_device_scale(observer, scale, scale);
@@ -180,7 +181,7 @@ static cairo_surface_t* record_page(PopplerPage* page) {
   cairo_tee_surface_add(tee, observer);
 
   cairo_t* cr = cairo_create(tee);
-  poppler_page_render(page, cr);
+  poppler_page_render(page->page, cr);
   bool recorded = cairo_status(cr) == CAIRO_STATUS_SUCCESS &&
                   cairo_surface_status(recording) == CAIRO_STATUS_SUCCESS;
   cairo_destroy(cr);
@@ -200,14 +201,20 @@ static bool render(void* opaque_page, cairo_t* cr) {
 
   if (!page->render_attempted) {
     page->render_attempted = true;
-    page->recording = record_page(page->page);
+    page->recording = record_page(page);
   }
+  // Poppler draws only the page's content, so paint the paper first.
+  // This isn't part of the recording, where it would count as an operation.
+  cairo_save(cr);
+  cairo_set_source_rgb(cr, 1, 1, 1);
+  cairo_rectangle(cr, 0, 0, page->width, page->height);
+  cairo_fill(cr);
   if (page->recording) {
-    cairo_save(cr);
     cairo_set_source_surface(cr, page->recording, 0, 0);
     cairo_paint(cr);
     cairo_restore(cr);
   } else {
+    cairo_restore(cr);
     poppler_page_render(page->page, cr);
   }
   cairo_status_t status = cairo_status(cr);

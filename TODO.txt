@@ -81,16 +81,10 @@ recording_surface.c needs an absolute path to the PDF, and writes PNGs to the cu
   Without recording, the fit-page view has to stay an exact pixel copy
   to avoid a second full render on every page turn,
   so previews have to start on whole pixels and partial edge pixels stay blended with white.
-- Stop painting pixels twice in render_frame.
-  Paint the grey background only outside the page,
-  and skip the white backing when the opaque preview covers it.
-  In a laptop profile of panning, these fills were about 19% of samples,
-  roughly 30% of the core's frame time.
-  The optimization branch has a version in two commits,
-  each about 10% faster a frame while panning at 4x on the laptop:
-  backends draw pages opaquely (PDF paints its paper; CBZ flattens transparent PNGs),
-  and the background fill leaves out whole pixels that pages cover.
-  Redo it after per-page previews.
+- Paint the grey background only outside the page, to stop painting pixels twice.
+  The optimization branch's second commit does it, leaving out whole pixels that pages cover,
+  and was about 10% faster a frame while panning at 4x on the laptop.
+  It adds a fair amount of code, so it isn't worth it unless the Pi drops frames.
 - Decode the next page in the background while the current one is shown,
   to hide page-turn cost when reading forward.
   Needs a worker thread and probably a second PopplerDocument,

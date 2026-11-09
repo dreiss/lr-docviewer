@@ -29,7 +29,8 @@ struct document_vtable {
   void* (*load_page)(void* document, int page, double* width, double* height);
   /// Releases a loaded page.
   void (*close_page)(void* page);
-  /// Returns true if a loaded page was rendered without an error.
+  /// Draws a loaded page from (0, 0) to its width and height, leaving nothing transparent,
+  /// and returns true if it was rendered without an error.
   bool (*render)(void* page, cairo_t* cr);
 };
 

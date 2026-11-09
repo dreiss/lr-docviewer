@@ -376,7 +376,28 @@ static cairo_surface_t* decode_png(
     cairo_surface_destroy(surface);
     return NULL;
   }
-  return surface;
+  if (cairo_image_surface_get_format(surface) == CAIRO_FORMAT_RGB24) {
+    return surface;
+  }
+
+  // Flatten transparency onto white paper once, so the page draws opaquely.
+  cairo_surface_t* opaque = cairo_image_surface_create(CAIRO_FORMAT_RGB24, (int)width, (int)height);
+  cairo_t* cr = cairo_create(opaque);
+  cairo_set_source_rgb(cr, 1, 1, 1);
+  cairo_paint(cr);
+  cairo_set_source_surface(cr, surface, 0, 0);
+  cairo_paint(cr);
+  status = cairo_status(cr);
+  cairo_destroy(cr);
+  cairo_surface_destroy(surface);
+  if (status != CAIRO_STATUS_SUCCESS) {
+    document_log_message(
+        log, "CBZ: Could not flatten PNG page '%s': %s", name, cairo_status_to_string(status)
+    );
+    cairo_surface_destroy(opaque);
+    return NULL;
+  }
+  return opaque;
 }
 
 static void jpeg_error_exit(j_common_ptr jpeg) {

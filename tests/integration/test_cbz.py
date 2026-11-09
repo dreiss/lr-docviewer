@@ -8,7 +8,7 @@ import pytest
 from libretro.api.log import LogLevel
 
 from content import make_jpeg, make_png, write_cbz
-from harness import HEIGHT, WIDTH, Core, Frame
+from harness import HEIGHT, WIDTH, Bounds, Core, Frame
 
 # Pages larger than the screen are scaled down, which keeps their colors and edges exact.
 
@@ -32,6 +32,13 @@ def test_jpeg_pages(core: Core, tmp_path: pathlib.Path) -> None:
         bounds = frame.page_bounds()
         assert bounds is not None
         assert (bounds.width, bounds.height) == (WIDTH, WIDTH // 3)
+
+
+def test_transparent_png_is_on_white(core: Core, tmp_path: pathlib.Path) -> None:
+    cbz = write_cbz(tmp_path / "png.cbz", {"page.png": make_png(1500, 1500, (200, 0, 0), 128)})
+    with core.open(cbz) as viewer:
+        # Half-transparent red over white.
+        assert viewer.run().locate((227, 127, 127), tolerance=2) == Bounds(420, 0, 1500, HEIGHT)
 
 
 def test_pages_use_bytewise_name_order(core: Core, tmp_path: pathlib.Path) -> None:

@@ -8,7 +8,7 @@ import pytest
 from libretro.api.log import LogLevel
 
 from content import GRID_CELLS, PdfPage, grid_color, make_checker_png, write_pdf
-from harness import HEIGHT, Bounds, Core, Viewer
+from harness import HEIGHT, WIDTH, Bounds, Core, Viewer
 
 # A page displayed as 600 x 800 points fits the screen at a scale of 1.35.
 PAGE = Bounds(555, 0, 1365, HEIGHT)
@@ -36,6 +36,18 @@ def test_rotated_page(core: Core, tmp_path: pathlib.Path, rotation: int, corner:
             assert abs(top_left.left - PAGE.left) <= 1
         else:
             assert abs(top_left.right - PAGE.right) <= 1
+
+
+def test_blank_page_is_white(core: Core, tmp_path: pathlib.Path) -> None:
+    pdf = write_pdf(tmp_path / "blank.pdf", [PdfPage(600, 800, rgb=None)])
+    white = (255, 255, 255)
+    with core.open(pdf) as viewer:
+        assert viewer.run().locate(white) == PAGE
+        # Zoomed in to 2 times, the page is 1620 pixels wide,
+        # both in the preview while zooming and once rendered at full quality.
+        zoomed = Bounds((WIDTH - 1620) // 2, 0, (WIDTH + 1620) // 2, HEIGHT)
+        assert viewer.run(60, y=True).locate(white) == zoomed
+        assert viewer.run().locate(white) == zoomed
 
 
 def test_crop_box_limits_the_page(core: Core, tmp_path: pathlib.Path) -> None:

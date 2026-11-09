@@ -677,25 +677,17 @@ enum render_mode {
 
 // === Rendering
 
-/// Fills behind each page on screen, in spread coordinates:
-/// white for transparent areas of loaded pages, and black for placeholders.
-static void fill_backings(cairo_t* cr) {
-  for (int i = 0; i < state.shown_count; i++) {
-    const struct shown_page* page = &state.shown[i];
-    double backing = page->page ? 1 : 0;
-    cairo_set_source_rgb(cr, backing, backing, backing);
-    cairo_rectangle(cr, page->x, page->y, page->width, page->height);
-    cairo_fill(cr);
-  }
-}
-
-/// Renders the loaded pages on screen, in spread coordinates.
+/// Draws the shown pages opaquely, in spread coordinates,
+/// with black placeholders for pages that couldn't be loaded.
 /// Returns false if any failed to render.
 static bool draw_pages(cairo_t* cr) {
   bool rendered = true;
   for (int i = 0; i < state.shown_count; i++) {
     const struct shown_page* page = &state.shown[i];
     if (!page->page) {
+      cairo_set_source_rgb(cr, 0, 0, 0);
+      cairo_rectangle(cr, page->x, page->y, page->width, page->height);
+      cairo_fill(cr);
       continue;
     }
     cairo_save(cr);
@@ -728,7 +720,7 @@ static bool create_cached_preview(void) {
     return false;
   }
 
-  // Paint a white background because PDF doesn't draw the background.
+  // Surround the pages with paper, so enlarging the preview doesn't blend their edges with grey.
   cairo_t* cr = cairo_create(preview);
   cairo_set_source_rgb(cr, 1, 1, 1);
   cairo_paint(cr);
@@ -737,7 +729,6 @@ static bool create_cached_preview(void) {
   double preview_scale = fit_scale();
   cairo_scale(cr, preview_scale, preview_scale);
   rotate_spread(cr);
-  fill_backings(cr);
   bool rendered = draw_pages(cr);
   cairo_status_t context_status = cairo_status(cr);
   cairo_destroy(cr);
@@ -855,8 +846,6 @@ static double render_frame(enum render_mode mode) {
   cairo_translate(cr, page_x, page_y);
   cairo_scale(cr, scale, scale);
   rotate_spread(cr);
-
-  fill_backings(cr);
 
   bool rendered = true;
   // Spreads of only placeholders have no cached preview.
