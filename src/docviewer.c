@@ -1135,8 +1135,10 @@ void retro_run(void) {
   state.frame_changed = false;
 }
 
-static void document_log(const char* message) {
-  LOG(RETRO_LOG_WARN, "Document Viewer: %s\n", message);
+static void document_log(enum document_log_level level, const char* message) {
+  LOG(level == DOCUMENT_LOG_DEBUG ? RETRO_LOG_DEBUG : RETRO_LOG_WARN,
+      "Document Viewer: %s\n",
+      message);
 }
 
 /// Returns true if the document and its initial frame were loaded.

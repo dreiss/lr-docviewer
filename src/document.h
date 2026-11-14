@@ -5,11 +5,21 @@
 
 #include <cairo.h>
 
-/// Reports a backend diagnostic to the core.
-typedef void (*document_log_t)(const char* message);
+enum document_log_level {
+  /// Details for diagnosing behavior or speed.
+  DOCUMENT_LOG_DEBUG,
+  /// Problems, including ones the backend recovers from.
+  DOCUMENT_LOG_WARNING,
+};
 
-/// Formats and reports a backend diagnostic when a callback is available.
+/// Reports a backend diagnostic to the core.
+typedef void (*document_log_t)(enum document_log_level level, const char* message);
+
+/// Formats and reports a backend problem as a warning when a callback is available.
 void document_log_message(document_log_t log, const char* format, ...);
+
+/// Formats and reports a backend detail for debugging when a callback is available.
+void document_log_debug(document_log_t log, const char* format, ...);
 
 /// How carefully a backend should draw a page.
 enum document_quality {

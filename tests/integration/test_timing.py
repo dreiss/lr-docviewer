@@ -33,24 +33,31 @@ def pdf(tmp_path: pathlib.Path) -> pathlib.Path:
     return write_pdf(tmp_path / "pages.pdf", [PdfPage(600, 600, grid=True)] * 3)
 
 
+# The grid's cells are 144 filled rectangles, so the page isn't replayed.
+DIRECT = "PDF: Rendering page at index {} directly (strokes: 0, other operations: 144)"
+
+
 def test_pdf_open_and_page_turn(core: Core, pdf: pathlib.Path) -> None:
     with core.open(pdf) as viewer:
         timings = Timings(viewer)
         assert timings.new() == [
             f"Opened {pdf} with 3 pages in T ms",
             "Loaded PDF page at index 0 in T ms",
+            DIRECT.format(0),
             "Rendered PDF page at index 0 as a preview in T ms",
             "Drew PDF page at index 0 at 1.00x zoom in T ms",
         ]
         viewer.tap("r")
         assert timings.new() == [
             "Loaded PDF page at index 1 in T ms",
+            DIRECT.format(1),
             "Rendered PDF page at index 1 as a preview in T ms",
             "Drew PDF page at index 1 at 1.00x zoom in T ms",
         ]
         viewer.reset()
         assert timings.new() == [
             "Loaded PDF page at index 0 in T ms",
+            DIRECT.format(0),
             "Rendered PDF page at index 0 as a preview in T ms",
             "Drew PDF page at index 0 at 1.00x zoom in T ms",
         ]

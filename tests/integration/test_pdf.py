@@ -73,6 +73,10 @@ def colors_at_max_zoom(viewer: Viewer) -> set[tuple[int, int, int]]:
     return {color for _, color in view.getcolors(view.width * view.height)}
 
 
+def has_message(viewer: Viewer, text: str) -> bool:
+    return any(text in message for message in viewer.log.messages(LogLevel.DEBUG))
+
+
 def test_scan_is_replayed(core: Core, tmp_path: pathlib.Path) -> None:
     # Poppler stops smoothing images enlarged 4 times or more when it renders
     # (see getFilterForSurface in its CairoOutputDev.cc),
@@ -82,6 +86,8 @@ def test_scan_is_replayed(core: Core, tmp_path: pathlib.Path) -> None:
     )
     with core.open(pdf) as viewer:
         assert len(colors_at_max_zoom(viewer)) > len(CHECKER)
+        assert has_message(viewer, "PDF: Replaying page at index 0")
+        assert not viewer.log.messages(LogLevel.WARNING)
 
 
 def test_replay_leaves_no_mark_at_the_page_center(core: Core, tmp_path: pathlib.Path) -> None:
@@ -106,6 +112,8 @@ def test_scan_with_vector_art_is_rendered_directly(core: Core, tmp_path: pathlib
     )
     with core.open(pdf) as viewer:
         assert colors_at_max_zoom(viewer) == set(CHECKER)
+        assert has_message(viewer, "PDF: Rendering page at index 0 directly")
+        assert not viewer.log.messages(LogLevel.WARNING)
 
 
 @pytest.mark.parametrize(
