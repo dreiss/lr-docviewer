@@ -41,7 +41,8 @@ recording_surface.c needs an absolute path to the PDF, and writes PNGs to the cu
              replay 43 ms and 41 ms
     page 19 (fold-out):  record 1727 ms;  direct 1801 ms and 1722 ms;
              replay 84 ms and 41 ms
-  Not checked on the Pi yet, through the core.
+  Through the core on a Pi 5, a few PDFs and CBZs ran fast enough (2026-11-14);
+  no timings were kept.
   What stops other pages: Cairo rounds a pure scaling transform to 24.8 fixed point (1/256)
   when it replays recorded paths.
   At 1.8x, a replayed rectangle lands exactly where a direct one would at 461/256,
@@ -117,7 +118,8 @@ recording_surface.c needs an absolute path to the PDF, and writes PNGs to the cu
   shift the existing pixels and draw only the exposed strip.
   Doesn't help zooming, and adds complexity.
 - Downscale high-resolution CBZ pages on load.
-  Deferred until CBZ load times on the Pi show it matters.
+  Deferred until CBZ load times on the Pi show it matters;
+  a few CBZs ran fast enough on a Pi 5.
   This would also fix pages over the 2^24-pixel cap, which now show a black placeholder;
   a letter-size page scanned at 600 dpi is about 34 megapixels.
   For JPEG, have libjpeg decode at 1/2, 1/4, or 1/8 size (scale_denom), which is cheap;
